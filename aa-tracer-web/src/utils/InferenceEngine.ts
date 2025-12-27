@@ -1,6 +1,9 @@
 import * as ort from 'onnxruntime-web';
 import { FeatureExtractor } from './FeatureExtractor';
 
+// ★重要: import.meta.env.BASE_URL でViteのbase設定(/ahoge02/)を取得できます
+const BASE_URL = import.meta.env.BASE_URL;
+
 export interface CharInfo {
   char: string;
   width: number;
@@ -30,16 +33,30 @@ export class InferenceEngine {
   currentModelUrl: string | null = null;
 
   async init(modelUrl: string, fontUrl: string, jsonUrl: string, mode: 'vector' | 'classifier' = 'vector') {
-    ort.env.wasm.wasmPaths = "/";
-    ort.env.wasm.numThreads = navigator.hardwareConcurrency || 4;
+    //ort.env.wasm.wasmPaths = "/";
+// もしBASE_URLが '/' なら '/onnx/'、そうでなければ '/ahoge02/onnx/' になるように整形
+    const onnxPath = BASE_URL === '/' ? '/onnx/' : `${BASE_URL}onnx/`;
+    
+    ort.env.wasm.wasmPaths = onnxPath;
+    ort.env.wasm.numThreads = 1;
+
+    // --- パス補正関数 ---
+    const fixPath = (path: string) => {
+        if (path.startsWith('http')) return path;
+        const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+        if (BASE_URL === '/') {
+            return `/${cleanPath}`;
+        }
+        return `${BASE_URL}${cleanPath}`;
+    };
 
     try {
-        const response = await fetch(jsonUrl);
+        const response = await fetch(fixPath(jsonUrl));
         if (response.ok) {
             const charList: string[] = await response.json();
             this.fullClassList = charList.map(c => (c === '<UNK>' || c === '<BOS>') ? ' ' : c);
         } else {
-            console.warn("JSON load failed, using default list.");
+            console.warn(`JSON load failed (${fixPath(jsonUrl)}), using default list.`);
             this.fullClassList = DEFAULT_CHARS.split('');
         }
     } catch (e) {
@@ -47,9 +64,10 @@ export class InferenceEngine {
         this.fullClassList = DEFAULT_CHARS.split('');
     }
 
-    await this.loadModel(modelUrl, mode);
+await this.loadModel(fixPath(modelUrl), mode);
+
     const charString = this.fullClassList.join('');
-    await this.updateDatabase(fontUrl, charString, 'Saitamaar');
+    await this.updateDatabase(fixPath(fontUrl), charString, 'Saitamaar');
   }
 
   async loadModel(modelUrl: string, mode: 'vector' | 'classifier') {
