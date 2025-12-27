@@ -1,27 +1,20 @@
-# .github/workflows/deploy.yml
 name: Deploy to GitHub Pages
 
 on:
-  # mainブランチにpushされたら実行
   push:
     branches: ["main"]
-
-  # Actionsタブから手動実行も許可
   workflow_dispatch:
 
-# GITHUB_TOKENの権限設定
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# 同時実行をスキップ（最新のデプロイを優先）
 concurrency:
   group: "pages"
   cancel-in-progress: true
 
 jobs:
-  # ビルドジョブ
   build:
     runs-on: ubuntu-latest
     steps:
@@ -33,20 +26,25 @@ jobs:
         with:
           node-version: "20"
           cache: 'npm'
+          # ★追加: キャッシュの依存パスを指定
+          cache-dependency-path: ./aa-tracer-web/package-lock.json
 
       - name: Install dependencies
+        # ★変更: コマンド実行場所をサブフォルダに変更
+        working-directory: ./aa-tracer-web
         run: npm ci
 
       - name: Build
+        # ★変更: コマンド実行場所をサブフォルダに変更
+        working-directory: ./aa-tracer-web
         run: npm run build
 
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Viteのビルド出力先（通常は dist）を指定
-          path: ./dist
+          # ★変更: ビルド成果物のパスもサブフォルダ配下を指定
+          path: ./aa-tracer-web/dist
 
-  # デプロイジョブ
   deploy:
     environment:
       name: github-pages
