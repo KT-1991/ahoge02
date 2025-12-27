@@ -15,6 +15,7 @@ export default defineConfig({
       ]
     })
   ],
+  base: '/ahoge02/',
   server: {
     // 【重要】マルチスレッドWASMを動かすためのセキュリティヘッダー設定
     headers: {
