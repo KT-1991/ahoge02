@@ -1,27 +1,20 @@
-# .github/workflows/deploy.yml
 name: Deploy to GitHub Pages
 
 on:
-  # mainブランチにpushされたら実行
   push:
     branches: ["main"]
-
-  # Actionsタブから手動実行も許可
   workflow_dispatch:
 
-# GITHUB_TOKENの権限設定
 permissions:
   contents: read
   pages: write
   id-token: write
 
-# 同時実行をスキップ（最新のデプロイを優先）
 concurrency:
   group: "pages"
   cancel-in-progress: true
 
 jobs:
-  # ビルドジョブ
   build:
     runs-on: ubuntu-latest
     steps:
@@ -43,10 +36,8 @@ jobs:
       - name: Upload artifact
         uses: actions/upload-pages-artifact@v3
         with:
-          # Viteのビルド出力先（通常は dist）を指定
           path: ./dist
 
-  # デプロイジョブ
   deploy:
     environment:
       name: github-pages
