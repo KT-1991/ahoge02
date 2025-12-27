@@ -25,6 +25,7 @@ export class InferenceEngine {
   session: ort.InferenceSession | null = null;
   charDb: CharInfo[] = [];
   mode: 'vector' | 'classifier' = 'vector';
+  usageHistory: Map<string, number> = new Map();
   
   private fullClassList: string[] = [];
   private activeClassMask: boolean[] = [];
@@ -156,7 +157,104 @@ await this.loadModel(fixPath(modelUrl), mode);
     
     console.log(`DB Rebuilt: ${this.charDb.length} chars. Mode=${this.mode}`);
   }
+    /**
+   * ★追加: 文字の使用を記録する
+   */
+  recordUsage(text: string) {
+      for (const char of text) {
+          const count = this.usageHistory.get(char) || 0;
+          // 上限を設けて、極端なバイアスを防ぐ
+          this.usageHistory.set(char, Math.min(count + 1, 50));
+      }
+  }
+/**
+   * ★追加: 指定座標から「次の数文字」を予測して提案する
+   * @param lineFeatures 行全体の特徴量
+   * @param imgWidth 画像幅
+   * @param startX カーソルの現在位置(px)
+   * @param maxChars 予測する最大文字数
+   */
+  async suggestText(
+    lineFeatures: Float32Array, 
+    imgWidth: number, 
+    startX: number, 
+    maxChars: number = 3
+  ): Promise<string> {
+      let currentX = startX;
+      let resultText = "";
+      
+      // 連続予測ループ
+      for (let i = 0; i < maxChars; i++) {
+          if (currentX >= imgWidth - 4) break;
 
+          // 1. パッチ抽出
+          // 半角文字(8px)の中心を狙って +4 してみる、あるいは全角(16px)の +8 を狙ってみる
+          // ここでは「次の文字の中心」はおおよそ「現在地 + 6px」あたりと仮定して探索
+          const centerX = currentX + 6; 
+          
+          const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
+          const tensor = this.toTensor(patch, 1, 32, 32, 9);
+          
+          // 2. 推論
+          if (!this.session) break;
+          const res = await this.session.run({ input_image: tensor });
+          const keys = Object.keys(res);
+          const outputData = res[keys[0]!]!.data as Float32Array;
+          
+          let candidates: any[] = [];
+          if (this.mode === 'classifier') {
+              candidates = this.getMaskedTopKClasses(outputData, 5);
+          } else {
+              candidates = this.searchVectorDb(outputData, 5);
+          }
+
+          if (candidates.length === 0) break;
+
+          // 3. 履歴バイアスの適用 & ベスト選択
+          // スコア(類似度やLogits)に、履歴ボーナスを加算して再ソート
+          const best = this.pickBestWithHistory(candidates);
+          
+          if (!best) break;
+          
+          // 空白や制御文字が連続で提案されたらそこで打ち切り
+          if (best.char === ' ' || best.char === '　') {
+              // 最初の1文字目が空白なら提案するが、2文字目以降が空白ならそこで終了
+              if (i === 0) {
+                  resultText += best.char;
+                  currentX += best.width;
+              }
+              break; 
+          }
+
+          resultText += best.char;
+          currentX += best.width;
+      }
+
+      return resultText;
+  }
+
+  /**
+   * ★追加: 履歴を加味してベストな候補を選ぶ
+   */
+  private pickBestWithHistory(candidates: { char: string, score: number, width: number }[]) {
+      // スコア計算用の一時配列
+      const scored = candidates.map(c => {
+          const usage = this.usageHistory.get(c.char) || 0;
+          
+          // バイアス計算: 
+          // Classifierモード(Logits)の場合、スコアは例えば 5.0 ~ -5.0
+          // Vectorモード(Cosine)の場合、スコアは 1.0 ~ -1.0
+          // 履歴1回につき 0.05 程度加算してみる (50回で +2.5)
+          const bonus = usage * 0.05;
+          
+          return { ...c, finalScore: c.score + bonus };
+      });
+
+      // スコア順にソート
+      scored.sort((a, b) => b.finalScore - a.finalScore);
+      
+      return scored[0];
+  }
   async solveLine(
     lineFeatures: Float32Array, 
     width: number,
