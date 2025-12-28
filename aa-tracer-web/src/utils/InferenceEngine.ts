@@ -29,13 +29,20 @@ export class InferenceEngine {
   
   private fullClassList: string[] = [];
   private activeClassMask: boolean[] = [];
+  
+  // ★追加: 許可された文字のセット (Vectorモード用フィルタ)
+  private allowedCharSet: Set<string> = new Set();
 
   fontName = 'Saitamaar';
   currentModelUrl: string | null = null;
 
-  async init(modelUrl: string, fontUrl: string, jsonUrl: string, mode: 'vector' | 'classifier' = 'vector') {
-    //ort.env.wasm.wasmPaths = "/";
-// もしBASE_URLが '/' なら '/onnx/'、そうでなければ '/ahoge02/onnx/' になるように整形
+  async init(
+      modelUrl: string, 
+      fontUrl: string, 
+      jsonUrl: string, 
+      mode: 'vector' | 'classifier' = 'vector',
+      fontName: string = 'Saitamaar' // ★修正: フォント名を受け取る
+  ) {
     const onnxPath = BASE_URL === '/' ? '/onnx/' : `${BASE_URL}onnx/`;
     
     ort.env.wasm.wasmPaths = onnxPath;
@@ -65,10 +72,11 @@ export class InferenceEngine {
         this.fullClassList = DEFAULT_CHARS.split('');
     }
 
-await this.loadModel(fixPath(modelUrl), mode);
+    await this.loadModel(fixPath(modelUrl), mode);
 
     const charString = this.fullClassList.join('');
-    await this.updateDatabase(fixPath(fontUrl), charString, 'Saitamaar');
+    // ★修正: 引数のfontNameを渡す
+    await this.updateDatabase(fixPath(fontUrl), charString, fontName);
   }
 
   async loadModel(modelUrl: string, mode: 'vector' | 'classifier') {
@@ -91,6 +99,20 @@ await this.loadModel(fixPath(modelUrl), mode);
       }
   }
 
+  // ★追加: 許可文字リストを更新するメソッド
+  updateAllowedChars(allowedChars: string) {
+      // Setを作成 (Vectorモード用)
+      this.allowedCharSet = new Set(allowedChars.split(''));
+
+      // ActiveMaskを更新 (Classifierモード用)
+      if (this.fullClassList.length > 0) {
+          this.activeClassMask = this.fullClassList.map(c => 
+              this.allowedCharSet.has(c) && c !== '<UNK>' && c !== '<BOS>'
+          );
+          console.log(`Allowed Chars Updated: ${this.allowedCharSet.size} chars active.`);
+      }
+  }
+
   async updateDatabase(fontUrl: string, charList: string, fontName: string) {
     this.fontName = fontName;
     if (fontUrl && fontUrl.startsWith('blob:')) {
@@ -100,16 +122,10 @@ await this.loadModel(fixPath(modelUrl), mode);
     }
 
     const uniqueChars = Array.from(new Set(charList.split('')));
-    const inputSet = new Set(uniqueChars); // ★未使用警告解決: 下で使用
-
-    if (this.mode === 'classifier') {
-        this.activeClassMask = new Array(this.fullClassList.length).fill(false);
-        this.fullClassList.forEach((char, idx) => {
-            if (inputSet.has(char) && char !== '<UNK>' && char !== '<BOS>') {
-                this.activeClassMask[idx] = true;
-            }
-        });
-        console.log(`Classifier Mask: ${this.activeClassMask.filter(b=>b).length} chars active.`);
+    
+    // ★修正: updateAllowedChars が呼ばれる前なら、ここで初期化
+    if (this.allowedCharSet.size === 0) {
+        this.updateAllowedChars(uniqueChars.join(''));
     }
 
     this.charDb = [];
@@ -124,7 +140,6 @@ await this.loadModel(fixPath(modelUrl), mode);
     const loopList = (this.mode === 'classifier') ? this.fullClassList : uniqueChars;
 
     for (let i = 0; i < loopList.length; i++) {
-        // ★修正: ! で非nullを保証
         const char = loopList[i]!;
         
         const metrics = ctx.measureText(char);
@@ -145,121 +160,55 @@ await this.loadModel(fixPath(modelUrl), mode);
                 const res = await this.session.run({ input_image: tensor });
                 const keys = Object.keys(res);
                 if (keys.length > 0) {
-                    // ★修正: [keys[0]!]
                     vector = res[keys[0]!]!.data as Float32Array;
                 }
             }
         }
 
-        // ★修正: !
         this.charDb.push({ char: char, vector, width: w });
     }
     
     console.log(`DB Rebuilt: ${this.charDb.length} chars. Mode=${this.mode}`);
   }
-    /**
-   * ★追加: 文字の使用を記録する
-   */
+
   recordUsage(text: string) {
       for (const char of text) {
           const count = this.usageHistory.get(char) || 0;
-          // 上限を設けて、極端なバイアスを防ぐ
           this.usageHistory.set(char, Math.min(count + 1, 50));
       }
   }
-/**
-   * ★追加: 指定座標から「次の数文字」を予測して提案する
-   * @param lineFeatures 行全体の特徴量
-   * @param imgWidth 画像幅
-   * @param startX カーソルの現在位置(px)
-   * @param maxChars 予測する最大文字数
-   */
-  async suggestText(
-    lineFeatures: Float32Array, 
-    imgWidth: number, 
-    startX: number, 
-    maxChars: number = 3
-  ): Promise<string> {
-      let currentX = startX;
-      let resultText = "";
+
+  // --- ヘルパー: 指定座標の色を取得 ---
+  private getColorAt(maskData: Uint8ClampedArray, width: number, x: number, y: number) {
+      const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
+      if (idx < 0 || idx >= maskData.length) return null;
       
-      // 連続予測ループ
-      for (let i = 0; i < maxChars; i++) {
-          if (currentX >= imgWidth - 4) break;
-
-          // 1. パッチ抽出
-          // 半角文字(8px)の中心を狙って +4 してみる、あるいは全角(16px)の +8 を狙ってみる
-          // ここでは「次の文字の中心」はおおよそ「現在地 + 6px」あたりと仮定して探索
-          const centerX = currentX + 6; 
-          
-          const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
-          const tensor = this.toTensor(patch, 1, 32, 32, 9);
-          
-          // 2. 推論
-          if (!this.session) break;
-          const res = await this.session.run({ input_image: tensor });
-          const keys = Object.keys(res);
-          const outputData = res[keys[0]!]!.data as Float32Array;
-          
-          let candidates: any[] = [];
-          if (this.mode === 'classifier') {
-              candidates = this.getMaskedTopKClasses(outputData, 5);
-          } else {
-              candidates = this.searchVectorDb(outputData, 5);
-          }
-
-          if (candidates.length === 0) break;
-
-          // 3. 履歴バイアスの適用 & ベスト選択
-          // スコア(類似度やLogits)に、履歴ボーナスを加算して再ソート
-          const best = this.pickBestWithHistory(candidates);
-          
-          if (!best) break;
-          
-          // 空白や制御文字が連続で提案されたらそこで打ち切り
-          if (best.char === ' ' || best.char === '　') {
-              // 最初の1文字目が空白なら提案するが、2文字目以降が空白ならそこで終了
-              if (i === 0) {
-                  resultText += best.char;
-                  currentX += best.width;
-              }
-              break; 
-          }
-
-          resultText += best.char;
-          currentX += best.width;
-      }
-
-      return resultText;
+      const r = maskData[idx]!;
+      //const g = maskData[idx + 1]!; // 未使用警告回避のため一旦読み込むが使わないなら _g でも可
+      const b = maskData[idx + 2]!;
+      const a = maskData[idx + 3]!;
+      
+      if (a < 50) return null; // 透明なら無視
+      
+      // 青 (B強, R弱)
+      if (b > 100 && r < 100) return 'blue';
+      // 赤 (R強, B弱)
+      if (r > 100 && b < 100) return 'red';
+      
+      return null;
   }
 
   /**
-   * ★追加: 履歴を加味してベストな候補を選ぶ
+   * 一括変換用 (ビームサーチ + ハッチング強制適用)
    */
-  private pickBestWithHistory(candidates: { char: string, score: number, width: number }[]) {
-      // スコア計算用の一時配列
-      const scored = candidates.map(c => {
-          const usage = this.usageHistory.get(c.char) || 0;
-          
-          // バイアス計算: 
-          // Classifierモード(Logits)の場合、スコアは例えば 5.0 ~ -5.0
-          // Vectorモード(Cosine)の場合、スコアは 1.0 ~ -1.0
-          // 履歴1回につき 0.05 程度加算してみる (50回で +2.5)
-          const bonus = usage * 0.05;
-          
-          return { ...c, finalScore: c.score + bonus };
-      });
-
-      // スコア順にソート
-      scored.sort((a, b) => b.finalScore - a.finalScore);
-      
-      return scored[0];
-  }
   async solveLine(
     lineFeatures: Float32Array, 
     width: number,
-    _bluePattern: string, // ★修正: _ を付けて未使用警告回避
-    _redPattern: string   // ★修正: _ を付けて未使用警告回避
+    blueChar: string, // ★追加
+    redChar: string,  // ★追加
+    maskData: Uint8ClampedArray | null = null, // ★追加
+    _yOffset: number = 0, // 互換性のため残すが未使用(_付き)
+    _noiseThreshold: number = 0 // 互換性のため残すが未使用(_付き)
   ): Promise<string> {
     const half = 16;
     const beamWidth = 3;
@@ -279,14 +228,41 @@ await this.loadModel(fixPath(modelUrl), mode);
           continue;
         }
 
+        // ★ハッチング強制判定 (Hard Override)
+        // 現在位置の中心付近の色を確認
+        const centerX = Math.min(Math.max(b.x + half, half), width - half);
+        
+        let forcedChar = null;
+        if (maskData) {
+            // maskDataは行ごとのデータ(Height=32)と仮定
+            const y = 16; // 行の中心
+            const color = this.getColorAt(maskData, width, centerX, y); 
+            if (color === 'blue') forcedChar = blueChar;
+            if (color === 'red') forcedChar = redChar;
+        }
+
+        if (forcedChar) {
+            // 強制文字が見つかった場合、AI推論をスキップしてその文字を採用
+            const charInfo = this.charDb.find(c => c.char === forcedChar);
+            const w = charInfo ? charInfo.width : 16; // フォールバック
+            
+            newBeams.push({
+                x: b.x + w,
+                cost: b.cost, // コスト加算なし（最優先）
+                text: b.text + forcedChar,
+                lastChar: forcedChar
+            });
+            // 強制文字がある場合は他の候補(AI予測)は生成しない
+            continue; 
+        }
+
+        // --- 通常のAI推論 (ビームサーチ) ---
         if (!searchCache.has(b.x)) {
-            const centerX = Math.min(Math.max(b.x + half, half), width - half);
             const patch = this.extractPatch(lineFeatures, width, centerX);
             const tensor = this.toTensor(patch, 1, 32, 32, 9);
             
             const res = await this.session!.run({ input_image: tensor });
             const keys = Object.keys(res);
-            // ★修正: [keys[0]!]
             const outputData = res[keys[0]!]!.data as Float32Array;
             
             let candidates: any[] = [];
@@ -332,25 +308,102 @@ await this.loadModel(fixPath(modelUrl), mode);
     return beams[0]?.text || "";
   }
 
+  /**
+   * 局所サジェスト用: ハッチング強制適用付き
+   */
+  async suggestText(
+    lineFeatures: Float32Array, 
+    imgWidth: number, 
+    startX: number, 
+    maskData: Uint8ClampedArray | null = null, // ★追加
+    blueChar: string = ':', // ★追加
+    redChar: string = '/',  // ★追加
+    maxChars: number = 3
+  ): Promise<string> {
+      let currentX = startX;
+      let resultText = "";
+      
+      for (let i = 0; i < maxChars; i++) {
+          if (currentX >= imgWidth - 4) break;
+          const centerX = currentX + 6; 
+          
+          // ★ハッチング強制判定
+          let forcedChar = null;
+          if (maskData) {
+              const y = 16; 
+              const color = this.getColorAt(maskData, imgWidth, centerX, y);
+              if (color === 'blue') forcedChar = blueChar;
+              if (color === 'red') forcedChar = redChar;
+          }
+
+          if (forcedChar) {
+              const charInfo = this.charDb.find(c => c.char === forcedChar);
+              const w = charInfo ? charInfo.width : 16;
+              resultText += forcedChar;
+              currentX += w;
+              continue; // 次の文字へ
+          }
+
+          // AI推論
+          const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
+          const tensor = this.toTensor(patch, 1, 32, 32, 9);
+          
+          if (!this.session) break;
+          const res = await this.session.run({ input_image: tensor });
+          const keys = Object.keys(res);
+          const outputData = res[keys[0]!]!.data as Float32Array;
+          
+          let candidates: any[] = [];
+          if (this.mode === 'classifier') {
+              candidates = this.getMaskedTopKClasses(outputData, 5);
+          } else {
+              candidates = this.searchVectorDb(outputData, 5);
+          }
+
+          if (candidates.length === 0) break;
+
+          const best = this.pickBestWithHistory(candidates);
+          if (!best) break;
+          
+          if (best.char === ' ' || best.char === '　') {
+              if (i === 0) {
+                  resultText += best.char;
+                  currentX += best.width;
+              }
+              break; 
+          }
+
+          resultText += best.char;
+          currentX += best.width;
+      }
+
+      return resultText;
+  }
+
+  private pickBestWithHistory(candidates: { char: string, score: number, width: number }[]) {
+      const scored = candidates.map(c => {
+          const usage = this.usageHistory.get(c.char) || 0;
+          const bonus = usage * 0.05;
+          return { ...c, finalScore: c.score + bonus };
+      });
+      scored.sort((a, b) => b.finalScore - a.finalScore);
+      return scored[0];
+  }
+
   private getMaskedTopKClasses(logits: Float32Array, topK: number) {
       const indexed: { score: number, index: number }[] = [];
-      
       for(let i=0; i<logits.length; i++) {
           if (this.activeClassMask[i]) {
               const score = logits[i] ?? -Infinity;
               indexed.push({ score, index: i });
           }
       }
-      
       indexed.sort((a, b) => b.score - a.score);
-      
       const results = [];
       for (let i = 0; i < topK && i < indexed.length; i++) {
-          // ★修正: [i]!
           const item = indexed[i]!;
           const idx = item.index;
           const info = this.charDb[idx]; 
-          
           if (info) {
               results.push({ 
                   char: info.char, 
@@ -362,10 +415,10 @@ await this.loadModel(fixPath(modelUrl), mode);
       return results;
   }
 
+  // ★修正: Vectorモード検索にもフィルタを追加
   private searchVectorDb(target: Float32Array, topK: number) {
     let norm = 0;
     for(let i=0; i<target.length; i++) {
-        // ★修正: [i] ?? 0
         const val = target[i] ?? 0;
         norm += val * val;
     }
@@ -379,17 +432,22 @@ await this.loadModel(fixPath(modelUrl), mode);
     }
 
     const scores = this.charDb.map(item => {
+        // ★フィルタ: 許可されていない文字は除外
+        if (this.allowedCharSet.size > 0 && !this.allowedCharSet.has(item.char)) {
+            return { ...item, score: -Infinity };
+        }
+
         if (!item.vector) return { ...item, score: -9999 };
         let dot = 0;
         for(let i=0; i<t.length; i++) {
-             // ★修正: t[i]! * (item.vector[i] ?? 0)
              dot += t[i]! * (item.vector[i] ?? 0);
         }
         return { ...item, score: dot };
     });
 
     scores.sort((a, b) => b.score - a.score);
-    return scores.slice(0, topK);
+    // スコアが低すぎるものは除外
+    return scores.filter(s => s.score > -9000).slice(0, topK);
   }
 
   private extractPatch(fullFeat: Float32Array, fullW: number, centerX: number): Float32Array {
@@ -407,7 +465,6 @@ await this.loadModel(fixPath(modelUrl), mode);
          } else {
              const srcIdx = (y * fullW + srcX) * 9;
              for(let c=0; c<9; c++) {
-                 // ★修正: [srcIdx + c] ?? 0
                  result[dstIdx + c] = fullFeat[srcIdx + c] ?? 0;
              }
          }
@@ -419,7 +476,6 @@ await this.loadModel(fixPath(modelUrl), mode);
   private toTensor(data: Float32Array, b: number, h: number, w: number, c: number): ort.Tensor {
      const float32 = new Float32Array(data.length);
      for(let i=0; i<data.length; i++) {
-         // ★修正: [i] ?? 0
          float32[i] = (data[i] ?? 0) / 255.0;
      }
      return new ort.Tensor('float32', float32, [b, h, w, c]);
