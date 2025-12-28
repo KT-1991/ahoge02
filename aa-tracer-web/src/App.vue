@@ -58,7 +58,7 @@ const config = ref({
 });
 
 // 文字選択UI
-const allCharCandidates = Array.from(new Set(DEFAULT_CHARS.split('')));
+const allCharCandidates = ref<string[]>(Array.from(new Set(DEFAULT_CHARS.split(''))));
 const toggleAllowedChar = (char: string) => {
     let current = config.value.allowedChars;
     if (current.includes(char)) {
@@ -119,6 +119,17 @@ onMounted(async () => {
       status.value = 'LOADING AI...';
       try {
         await engine.init('/aa_model_a.onnx', '/Saitamaar.ttf', '/aa_chars.json', 'classifier', 'Saitamaar');
+        // ★追加: JSONから読み込んだ文字リストをConfigに適用
+        const loadedChars = engine.getLoadedCharList();
+        if (loadedChars.length > 0) {
+            // スペースは必須なので先頭に追加し、残りを結合
+            const newSet = ' ' + loadedChars;
+            config.value.allowedChars = newSet;
+            
+            // 文字選択パレットも更新 (スペース以外を表示)
+            allCharCandidates.value = Array.from(loadedChars);
+        }
+
         engine.updateAllowedChars(config.value.allowedChars);
         
         setTimeout(initSpaceMetrics, 500);

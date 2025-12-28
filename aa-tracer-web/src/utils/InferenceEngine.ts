@@ -480,4 +480,13 @@ export class InferenceEngine {
      }
      return new ort.Tensor('float32', float32, [b, h, w, c]);
   }
+    getLoadedCharList(): string {
+      // Setで重複を除去
+      const uniqueSet = new Set(this.fullClassList);
+      // 特殊トークンが ' ' に変換されている場合があるので、それは除外して後で制御する
+      uniqueSet.delete(' ');
+      
+      // 文字列として結合
+      return Array.from(uniqueSet).join('');
+  }
 }
