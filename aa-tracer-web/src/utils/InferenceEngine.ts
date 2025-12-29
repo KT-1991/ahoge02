@@ -218,7 +218,6 @@ export class InferenceEngine {
     redChar: string, 
     maskData: Uint8ClampedArray | null = null,
     _yOffset: number = 0,
-    noiseThreshold: number = 0,
     // ★追加: 生成モードとコンテキスト
     generationMode: 'hybrid' | 'accurate' = 'hybrid',
     ctx: CanvasRenderingContext2D | null = null

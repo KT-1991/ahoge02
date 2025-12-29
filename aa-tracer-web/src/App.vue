@@ -40,7 +40,7 @@ const aaOutput = computed({
     get: () => projectAAs.value[currentAAIndex.value]?.content || '',
     set: (val) => {
         if (projectAAs.value[currentAAIndex.value]) {
-            projectAAs.value[currentAAIndex.value].content = val;
+            projectAAs.value[currentAAIndex.value]!.content = val;
         }
     }
 });
@@ -105,7 +105,6 @@ const subTextColor = ref('#ffffff');
 const tracePaneRatio = ref(0.5); 
 const isResizingPane = ref(false);
 const editorStackRef = ref<HTMLElement | null>(null);
-const isBottomCollapsed = ref(false); 
 const showBackgroundImage = ref(true);
 
 // Layout State
@@ -142,7 +141,7 @@ const undo = () => {
     if (historyIndex.value > 0) {
         isHistoryNavigating.value = true;
         historyIndex.value--;
-        aaOutput.value = historyStack.value[historyIndex.value];
+        aaOutput.value = historyStack.value[historyIndex.value]!;
         nextTick(() => isHistoryNavigating.value = false);
     }
 };
@@ -151,7 +150,7 @@ const redo = () => {
     if (historyIndex.value < historyStack.value.length - 1) {
         isHistoryNavigating.value = true;
         historyIndex.value++;
-        aaOutput.value = historyStack.value[historyIndex.value];
+        aaOutput.value = historyStack.value[historyIndex.value]!;
         nextTick(() => isHistoryNavigating.value = false);
     }
 };
@@ -219,8 +218,6 @@ const lastCursorPos = ref({ row: 0, col: 0 });
 const isAltPressed = ref(false);
 const isBoxSelecting = ref(false);
 const boxSelectPx = ref({ startX: 0, endX: 0, startRow: 0, endRow: 0 });
-const boxSelectStart = ref({ row: 0, col: 0 });
-const boxSelectEnd = ref({ row: 0, col: 0 });
 const showBoxOverlay = ref(false);
 
 const getPosFromIndex = (text: string, index: number) => {
@@ -229,18 +226,6 @@ const getPosFromIndex = (text: string, index: number) => {
     const lastNewLine = textBefore.lastIndexOf('\n');
     const col = index - (lastNewLine + 1);
     return { row, col };
-};
-
-const getIndexFromPos = (text: string, row: number, col: number) => {
-    const lines = text.split('\n');
-    if (row >= lines.length) return -1;
-    let index = 0;
-    for (let i = 0; i < row; i++) {
-        index += lines[i].length + 1; 
-    }
-    const lineLen = lines[row].length;
-    const actualCol = Math.min(col, lineLen);
-    return index + actualCol;
 };
 
 // ピクセル計算ヘルパー
@@ -321,6 +306,7 @@ const onTextareaMouseDown = (e: MouseEvent, source: 'trace' | 'text') => {
 };
 
 const onTextareaMouseMove = (e: MouseEvent, source: 'trace' | 'text') => {
+    console.log(source)
     if (e.buttons === 1 && isBoxSelecting.value) {
         const textarea = e.target as HTMLTextAreaElement;
         const end = textarea.selectionEnd; 
@@ -363,7 +349,7 @@ const getIndexFromPixelInLine = (line: string, targetPx: number, ctx: CanvasRend
     let currentW = 0;
     const chars = [...line]; 
     for (let i = 0; i < chars.length; i++) {
-        const charW = ctx.measureText(chars[i]).width;
+        const charW = ctx.measureText(chars[i]!).width;
         if (currentW + charW / 2 > targetPx) return i;
         currentW += charW;
     }
@@ -554,7 +540,6 @@ const showSaveMenu = ref(false);
 const showGridOverlay = ref(false);
 const showConfigModal = ref(false);
 const showExportModal = ref(false);
-const showPaintModal = ref(false);
 const showDebugModal = ref(false);
 const showPaletteEditor = ref(false); 
 const showCopyMenu = ref(false);
@@ -570,7 +555,6 @@ const mirrorRef = ref<HTMLElement | null>(null);
 
 const scrollX = ref(0);
 const scrollY = ref(0);
-const VIEW_SCALE = 1.0; 
 
 // --- ★Palette System (New) ---
 
@@ -612,7 +596,7 @@ const loadPaletteFromStorage = () => {
     }
     if (categories.value.length > 0) {
         const exists = categories.value.some(c => c.id === currentCategoryId.value);
-        if (!exists) currentCategoryId.value = categories.value[0].id;
+        if (!exists) currentCategoryId.value = categories.value[0]!.id;
     }
 };
 loadPaletteFromStorage();
@@ -643,7 +627,7 @@ const removeCategory = (id: string) => {
         categories.value = categories.value.filter(c => c.id !== id);
         if (editingCatId.value === id) editingCatId.value = null;
         if (currentCategoryId.value === id && categories.value.length > 0) {
-            currentCategoryId.value = categories.value[0].id;
+            currentCategoryId.value = categories.value[0]!.id;
         }
         savePaletteToStorage();
     }
@@ -652,8 +636,8 @@ const moveCategory = (index: number, direction: -1 | 1) => {
     const newIndex = index + direction;
     if (newIndex < 0 || newIndex >= categories.value.length) return;
     const temp = categories.value[index];
-    categories.value[index] = categories.value[newIndex];
-    categories.value[newIndex] = temp;
+    categories.value[index] = categories.value[newIndex]!;
+    categories.value[newIndex] = temp!;
     savePaletteToStorage();
 };
 
@@ -769,11 +753,6 @@ const renderLayer = (targetCanvas: HTMLCanvasElement, source: HTMLImageElement |
     ctx.scale(imgTransform.value.scale, imgTransform.value.scale);
     ctx.drawImage(source, 0, 0);
     ctx.restore();
-};
-
-const renderCanvas = (canvas: HTMLCanvasElement | null) => {
-    if (!canvas) return;
-    renderLayer(canvas, processedSource.value || sourceImage.value);
 };
 
 const updateImageTransform = async () => { 
@@ -924,10 +903,10 @@ const performFloodFill = (imgX: number, imgY: number, isEraser: boolean) => {
                 if (isEraser) {
                     data[idx + 3] = 0;
                 } else {
-                    data[idx] = color[0];
-                    data[idx+1] = color[1];
-                    data[idx+2] = color[2];
-                    data[idx+3] = color[3];
+                    data[idx] = color[0]!;
+                    data[idx+1] = color[1]!;
+                    data[idx+2] = color[2]!;
+                    data[idx+3] = color[3]!;
                 }
             }
         }
@@ -1009,7 +988,7 @@ const processImage = async () => {
          // ★engine.solveLine にパラメータを渡す
          const lineText = await engine.solveLine(
              lineFeat, w, targetCharBlue.value, targetCharRed.value, 
-             rowMaskData, y, config.value.noiseGate,
+             rowMaskData, y,
              config.value.generationMode, // 'hybrid' or 'accurate'
              ctx
          );
@@ -1038,14 +1017,14 @@ const visualizeFeatureMap = (features: Float32Array, width: number, height: numb
     const len = width * height;
     
     for (let i = 0; i < len; i += 10) {
-        const val = features[i * 9];
+        const val = features[i * 9]!;
         if (val < minVal) minVal = val;
         if (val > maxVal) maxVal = val;
     }
     if (maxVal === minVal) { maxVal = minVal + 1; }
     
     for (let i = 0; i < len; i++) {
-        const val = features[i * 9]; 
+        const val = features[i * 9]!; 
         let color = Math.floor((val - minVal) / (maxVal - minVal) * 255);
         if (color < 0) color = 0;
         if (color > 255) color = 255;
@@ -1114,7 +1093,7 @@ const onKeyUp = (e: KeyboardEvent) => {
     updateCursorInfo(null); 
     updateCaretSync(e, activeEditor.value || 'text');
 };
-const onClickText = (e: MouseEvent) => { 
+const onClickText = () => { 
     updateGhost(); 
     updateCursorInfo(null);
 };
@@ -1211,7 +1190,7 @@ const updateGhost = async () => {
 };
 
 const onScroll = (e: Event) => { const target = e.target as HTMLElement; scrollX.value = target.scrollLeft; scrollY.value = target.scrollTop; };
-const getPointerPos = (e: MouseEvent, canvas: HTMLCanvasElement) => { const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height; return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY }; };
+//const getPointerPos = (e: MouseEvent, canvas: HTMLCanvasElement) => { const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height; return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY }; };
 const onWheel = (e: WheelEvent) => { if (!sourceImage.value || sidebarTab.value !== 'image') return; e.preventDefault(); const zoomSpeed = 0.001; const delta = -e.deltaY * zoomSpeed; const newScale = Math.max(0.1, imgTransform.value.scale + delta); imgTransform.value.scale = newScale; updateCanvasDimensions(); };
 
 // --- 1px Shift Logic ---
@@ -1272,6 +1251,7 @@ const shiftSpace = (direction: 'narrow' | 'wide') => {
     nextTick(() => { const newPos = lineStart + prefix.length + newSpacer.length; textarea.selectionStart = textarea.selectionEnd = newPos; updateCursorInfo(null); });
 };
 const updateCursorInfo = (e: Event | null) => {
+    console.log(e?.target)
     const textarea = document.querySelector('.aa-textarea') as HTMLTextAreaElement;
     if (!textarea) return;
     const val = textarea.value; const sel = textarea.selectionStart;
@@ -1400,9 +1380,9 @@ const generateTimelapse = async () => {
         ctx.fillStyle = textColor;
         ctx.textBaseline = 'top';
         
-        const lines = text.split('\n');
+        const lines = text!.split('\n');
         for (let j = 0; j < lines.length; j++) {
-            ctx.fillText(lines[j], padding, padding + j * lineHeight);
+            ctx.fillText(lines[j]!, padding, padding + j * lineHeight);
         }
         
         if (i % 50 === 0) {
@@ -1434,7 +1414,7 @@ const onFileSelected = async (e: Event) => {
 };
 const onSaveFile = (format: FileFormat, encoding: EncodingType) => { const ext = format === 'AST' ? '.ast' : '.mlt'; const name = `aa_project${ext}`; AaFileManager.saveFile(projectAAs.value, encoding, format, name); showSaveMenu.value = false; };
 const addNewAA = () => { const num = projectAAs.value.length + 1; projectAAs.value.push({ title: `Untitled ${num}`, content: '' }); currentAAIndex.value = projectAAs.value.length - 1; showGridOverlay.value = false; };
-const deleteAA = (idx: number) => { if (projectAAs.value.length <= 1) { projectAAs.value[0].content = ''; projectAAs.value[0].title = 'Untitled 1'; return; } projectAAs.value.splice(idx, 1); if (currentAAIndex.value >= projectAAs.value.length) { currentAAIndex.value = projectAAs.value.length - 1; } };
+const deleteAA = (idx: number) => { if (projectAAs.value.length <= 1) { projectAAs.value[0]!.content = ''; projectAAs.value[0]!.title = 'Untitled 1'; return; } projectAAs.value.splice(idx, 1); if (currentAAIndex.value >= projectAAs.value.length) { currentAAIndex.value = projectAAs.value.length - 1; } };
 const selectAA = (idx: number) => { currentAAIndex.value = idx; showGridOverlay.value = false; };
 const onFileChange = async (e: Event) => { const file = (e.target as HTMLInputElement).files?.[0]; if (!file || !isReady.value) return; loadImageFromFile(file); };
 const loadImageFromFile = (file: File) => {
@@ -1573,7 +1553,7 @@ const processSourceImage = () => {
                  }"
                  @click="activeEditor = 'trace'">
                 <div class="card-header">
-                    <input v-model="projectAAs[currentAAIndex].title" class="aa-title-input" placeholder="AA Title" />
+                    <input v-model="projectAAs[currentAAIndex]!.title" class="aa-title-input" placeholder="AA Title" />
                     <div class="card-actions">
                         <span v-if="!sourceImage" class="hint">Load Image from Sidebar →</span>
                     </div>
