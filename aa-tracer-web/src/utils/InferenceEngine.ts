@@ -1,7 +1,6 @@
 import * as ort from 'onnxruntime-web';
 import { FeatureExtractor } from './FeatureExtractor';
 
-// ★重要: import.meta.env.BASE_URL でViteのbase設定(/ahoge02/)を取得できます
 const BASE_URL = import.meta.env.BASE_URL;
 
 export interface CharInfo {
@@ -29,9 +28,11 @@ export class InferenceEngine {
   
   private fullClassList: string[] = [];
   private activeClassMask: boolean[] = [];
-  
-  // ★追加: 許可された文字のセット (Vectorモード用フィルタ)
   private allowedCharSet: Set<string> = new Set();
+
+  // ★追加: 文字幅キャッシュ
+  private charWidthCache: Map<string, number> = new Map();
+  private currentFontName: string = '';
 
   fontName = 'Saitamaar';
   currentModelUrl: string | null = null;
@@ -41,20 +42,16 @@ export class InferenceEngine {
       fontUrl: string, 
       jsonUrl: string, 
       mode: 'vector' | 'classifier' = 'vector',
-      fontName: string = 'Saitamaar' // ★修正: フォント名を受け取る
+      fontName: string = 'Saitamaar'
   ) {
     const onnxPath = BASE_URL === '/' ? '/onnx/' : `${BASE_URL}onnx/`;
-    
     ort.env.wasm.wasmPaths = onnxPath;
     ort.env.wasm.numThreads = 1;
 
-    // --- パス補正関数 ---
     const fixPath = (path: string) => {
         if (path.startsWith('http')) return path;
         const cleanPath = path.startsWith('/') ? path.slice(1) : path;
-        if (BASE_URL === '/') {
-            return `/${cleanPath}`;
-        }
+        if (BASE_URL === '/') return `/${cleanPath}`;
         return `${BASE_URL}${cleanPath}`;
     };
 
@@ -64,7 +61,7 @@ export class InferenceEngine {
             const charList: string[] = await response.json();
             this.fullClassList = charList.map(c => (c === '<UNK>' || c === '<BOS>') ? ' ' : c);
         } else {
-            console.warn(`JSON load failed (${fixPath(jsonUrl)}), using default list.`);
+            console.warn(`JSON load failed, using default.`);
             this.fullClassList = DEFAULT_CHARS.split('');
         }
     } catch (e) {
@@ -75,7 +72,6 @@ export class InferenceEngine {
     await this.loadModel(fixPath(modelUrl), mode);
 
     const charString = this.fullClassList.join('');
-    // ★修正: 引数のfontNameを渡す
     await this.updateDatabase(fixPath(fontUrl), charString, fontName);
   }
 
@@ -99,18 +95,42 @@ export class InferenceEngine {
       }
   }
 
-  // ★追加: 許可文字リストを更新するメソッド
   updateAllowedChars(allowedChars: string) {
-      // Setを作成 (Vectorモード用)
       this.allowedCharSet = new Set(allowedChars.split(''));
-
-      // ActiveMaskを更新 (Classifierモード用)
       if (this.fullClassList.length > 0) {
           this.activeClassMask = this.fullClassList.map(c => 
               this.allowedCharSet.has(c) && c !== '<UNK>' && c !== '<BOS>'
           );
-          console.log(`Allowed Chars Updated: ${this.allowedCharSet.size} chars active.`);
       }
+      // フォント名が決まっていればメトリクスも再計算
+      if (this.currentFontName) {
+          this.updateFontMetrics(this.currentFontName, allowedChars);
+      }
+  }
+
+  // ★追加: 高精度な文字幅の事前計算
+  updateFontMetrics(fontName: string, allowedChars: string) {
+      this.currentFontName = fontName;
+      this.charWidthCache.clear();
+
+      const canvas = document.createElement('canvas');
+      const ctx = canvas.getContext('2d')!;
+      ctx.font = `16px "${fontName}"`; 
+
+      const uniqueChars = Array.from(new Set(allowedChars.split('')));
+      const sampleCount = 50; 
+
+      uniqueChars.forEach(c => {
+          // 50個並べて平均を取ることで、サブピクセル精度とカーニングの平均値を得る
+          const text = c.repeat(sampleCount);
+          const width = ctx.measureText(text).width / sampleCount;
+          this.charWidthCache.set(c, width);
+      });
+      // スペースは必須
+      if (!this.charWidthCache.has(' ')) {
+          this.charWidthCache.set(' ', ctx.measureText(' '.repeat(50)).width / 50);
+      }
+      console.log(`[InferenceEngine] Metrics updated for ${fontName}. Cache size: ${this.charWidthCache.size}`);
   }
 
   async updateDatabase(fontUrl: string, charList: string, fontName: string) {
@@ -123,10 +143,11 @@ export class InferenceEngine {
 
     const uniqueChars = Array.from(new Set(charList.split('')));
     
-    // ★修正: updateAllowedChars が呼ばれる前なら、ここで初期化
     if (this.allowedCharSet.size === 0) {
         this.updateAllowedChars(uniqueChars.join(''));
     }
+    // ここで一回計算しておく
+    this.updateFontMetrics(fontName, this.getLoadedCharList());
 
     this.charDb = [];
     const canvas = document.createElement('canvas');
@@ -141,9 +162,8 @@ export class InferenceEngine {
 
     for (let i = 0; i < loopList.length; i++) {
         const char = loopList[i]!;
-        
         const metrics = ctx.measureText(char);
-        const w = Math.max(4, Math.ceil(metrics.width));
+        const w = Math.max(4, Math.ceil(metrics.width)); // DB構築時は整数でOK
         
         let vector: Float32Array | null = null;
 
@@ -164,11 +184,9 @@ export class InferenceEngine {
                 }
             }
         }
-
         this.charDb.push({ char: char, vector, width: w });
     }
-    
-    console.log(`DB Rebuilt: ${this.charDb.length} chars. Mode=${this.mode}`);
+    console.log(`DB Rebuilt: ${this.charDb.length} chars.`);
   }
 
   recordUsage(text: string) {
@@ -178,41 +196,37 @@ export class InferenceEngine {
       }
   }
 
-  // --- ヘルパー: 指定座標の色を取得 ---
   private getColorAt(maskData: Uint8ClampedArray, width: number, x: number, y: number) {
       const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
       if (idx < 0 || idx >= maskData.length) return null;
-      
       const r = maskData[idx]!;
-      //const g = maskData[idx + 1]!; // 未使用警告回避のため一旦読み込むが使わないなら _g でも可
       const b = maskData[idx + 2]!;
       const a = maskData[idx + 3]!;
-      
-      if (a < 50) return null; // 透明なら無視
-      
-      // 青 (B強, R弱)
+      if (a < 50) return null; 
       if (b > 100 && r < 100) return 'blue';
-      // 赤 (R強, B弱)
       if (r > 100 && b < 100) return 'red';
-      
       return null;
   }
 
   /**
-   * 一括変換用 (ビームサーチ + ハッチング強制適用)
+   * 一括変換用: Hybrid / Accurate モード対応
    */
   async solveLine(
     lineFeatures: Float32Array, 
     width: number,
-    blueChar: string, // ★追加
-    redChar: string,  // ★追加
-    maskData: Uint8ClampedArray | null = null, // ★追加
-    _yOffset: number = 0, // 互換性のため残すが未使用(_付き)
-    _noiseThreshold: number = 0 // 互換性のため残すが未使用(_付き)
+    blueChar: string,
+    redChar: string, 
+    maskData: Uint8ClampedArray | null = null,
+    _yOffset: number = 0,
+    noiseThreshold: number = 0,
+    // ★追加: 生成モードとコンテキスト
+    generationMode: 'hybrid' | 'accurate' = 'hybrid',
+    ctx: CanvasRenderingContext2D | null = null
   ): Promise<string> {
     const half = 16;
     const beamWidth = 3;
-    let beams = [{ x: 0, cost: 0, text: "", lastChar: "" }];
+    // xはfloatで保持する
+    let beams = [{ x: 0.0, cost: 0, text: "", lastChar: "" }];
     const searchCache = new Map<number, any[]>();
     
     let step = 0;
@@ -228,36 +242,43 @@ export class InferenceEngine {
           continue;
         }
 
-        // ★ハッチング強制判定 (Hard Override)
-        // 現在位置の中心付近の色を確認
         const centerX = Math.min(Math.max(b.x + half, half), width - half);
         
+        // --- 強制文字判定 ---
         let forcedChar = null;
         if (maskData) {
-            // maskDataは行ごとのデータ(Height=32)と仮定
-            const y = 16; // 行の中心
+            const y = 16; 
             const color = this.getColorAt(maskData, width, centerX, y); 
             if (color === 'blue') forcedChar = blueChar;
             if (color === 'red') forcedChar = redChar;
         }
 
         if (forcedChar) {
-            // 強制文字が見つかった場合、AI推論をスキップしてその文字を採用
-            const charInfo = this.charDb.find(c => c.char === forcedChar);
-            const w = charInfo ? charInfo.width : 16; // フォールバック
+            // 強制文字の場合はキャッシュから幅を取得
+            const w = this.charWidthCache.get(forcedChar) || 8.0;
+            const nextText = b.text + forcedChar;
             
+            // ★位置更新ロジック (強制文字版)
+            let nextX = b.x + w;
+            if (generationMode === 'accurate' && ctx) {
+                nextX = ctx.measureText(nextText).width;
+            } else if (generationMode === 'hybrid' && ctx && nextText.length % 10 === 0) {
+                nextX = ctx.measureText(nextText).width;
+            }
+
             newBeams.push({
-                x: b.x + w,
-                cost: b.cost, // コスト加算なし（最優先）
-                text: b.text + forcedChar,
+                x: nextX,
+                cost: b.cost,
+                text: nextText,
                 lastChar: forcedChar
             });
-            // 強制文字がある場合は他の候補(AI予測)は生成しない
             continue; 
         }
 
-        // --- 通常のAI推論 (ビームサーチ) ---
-        if (!searchCache.has(b.x)) {
+        // --- AI推論 ---
+        // searchCacheのキーは整数に丸めてヒット率を上げる
+        const cacheKey = Math.floor(b.x);
+        if (!searchCache.has(cacheKey)) {
             const patch = this.extractPatch(lineFeatures, width, centerX);
             const tensor = this.toTensor(patch, 1, 32, 32, 9);
             
@@ -266,17 +287,15 @@ export class InferenceEngine {
             const outputData = res[keys[0]!]!.data as Float32Array;
             
             let candidates: any[] = [];
-
             if (this.mode === 'classifier') {
                 candidates = this.getMaskedTopKClasses(outputData, 10);
             } else {
                 candidates = this.searchVectorDb(outputData, 10);
             }
-            
-            searchCache.set(b.x, candidates);
+            searchCache.set(cacheKey, candidates);
         }
 
-        const candidates = searchCache.get(b.x)!;
+        const candidates = searchCache.get(cacheKey)!;
 
         for (const cand of candidates) {
            let visualCost = 0;
@@ -287,10 +306,30 @@ export class InferenceEngine {
            }
            if (visualCost < 0) visualCost = 0;
 
+           const nextText = b.text + cand.char;
+           
+           // ★位置更新ロジック (AI推論版)
+           let nextX = b.x;
+           
+           if (generationMode === 'accurate' && ctx) {
+               // 毎回実測
+               nextX = ctx.measureText(nextText).width;
+           } else {
+               // Hybrid or Normal
+               // キャッシュされた高精度幅を使う
+               const w = this.charWidthCache.get(cand.char) || cand.width;
+               nextX = b.x + w;
+
+               // Hybridかつ10文字ごとなら補正
+               if (generationMode === 'hybrid' && ctx && nextText.length % 10 === 0) {
+                   nextX = ctx.measureText(nextText).width;
+               }
+           }
+
            newBeams.push({
-             x: b.x + cand.width,
+             x: nextX,
              cost: b.cost + visualCost,
-             text: b.text + cand.char,
+             text: nextText,
              lastChar: cand.char
            });
         }
@@ -300,7 +339,8 @@ export class InferenceEngine {
       beams = newBeams.slice(0, beamWidth);
       beams.push(...finishedBeams);
       
-      if (beams.every(b => b.x >= width - 4)) break;
+      // 全ビームが終了条件を満たしたら終了
+      if (beams.length > 0 && beams.every(b => b.x >= width - 4)) break;
       step++;
     }
 
@@ -308,16 +348,14 @@ export class InferenceEngine {
     return beams[0]?.text || "";
   }
 
-  /**
-   * 局所サジェスト用: ハッチング強制適用付き
-   */
+  // suggestTextは簡易版のまま (CanvasコンテキストがないためHybridの補正なし版として動作)
   async suggestText(
     lineFeatures: Float32Array, 
     imgWidth: number, 
     startX: number, 
-    maskData: Uint8ClampedArray | null = null, // ★追加
-    blueChar: string = ':', // ★追加
-    redChar: string = '/',  // ★追加
+    maskData: Uint8ClampedArray | null = null,
+    blueChar: string = ':',
+    redChar: string = '/', 
     maxChars: number = 3
   ): Promise<string> {
       let currentX = startX;
@@ -327,7 +365,6 @@ export class InferenceEngine {
           if (currentX >= imgWidth - 4) break;
           const centerX = currentX + 6; 
           
-          // ★ハッチング強制判定
           let forcedChar = null;
           if (maskData) {
               const y = 16; 
@@ -337,14 +374,12 @@ export class InferenceEngine {
           }
 
           if (forcedChar) {
-              const charInfo = this.charDb.find(c => c.char === forcedChar);
-              const w = charInfo ? charInfo.width : 16;
+              const w = this.charWidthCache.get(forcedChar) || 8.0;
               resultText += forcedChar;
               currentX += w;
-              continue; // 次の文字へ
+              continue;
           }
 
-          // AI推論
           const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
           const tensor = this.toTensor(patch, 1, 32, 32, 9);
           
@@ -368,13 +403,14 @@ export class InferenceEngine {
           if (best.char === ' ' || best.char === '　') {
               if (i === 0) {
                   resultText += best.char;
-                  currentX += best.width;
+                  // キャッシュがあればそれを使う
+                  currentX += (this.charWidthCache.get(best.char) || best.width);
               }
               break; 
           }
 
           resultText += best.char;
-          currentX += best.width;
+          currentX += (this.charWidthCache.get(best.char) || best.width);
       }
 
       return resultText;
@@ -415,7 +451,6 @@ export class InferenceEngine {
       return results;
   }
 
-  // ★修正: Vectorモード検索にもフィルタを追加
   private searchVectorDb(target: Float32Array, topK: number) {
     let norm = 0;
     for(let i=0; i<target.length; i++) {
@@ -432,7 +467,6 @@ export class InferenceEngine {
     }
 
     const scores = this.charDb.map(item => {
-        // ★フィルタ: 許可されていない文字は除外
         if (this.allowedCharSet.size > 0 && !this.allowedCharSet.has(item.char)) {
             return { ...item, score: -Infinity };
         }
@@ -446,7 +480,6 @@ export class InferenceEngine {
     });
 
     scores.sort((a, b) => b.score - a.score);
-    // スコアが低すぎるものは除外
     return scores.filter(s => s.score > -9000).slice(0, topK);
   }
 
@@ -481,12 +514,8 @@ export class InferenceEngine {
      return new ort.Tensor('float32', float32, [b, h, w, c]);
   }
     getLoadedCharList(): string {
-      // Setで重複を除去
       const uniqueSet = new Set(this.fullClassList);
-      // 特殊トークンが ' ' に変換されている場合があるので、それは除外して後で制御する
       uniqueSet.delete(' ');
-      
-      // 文字列として結合
       return Array.from(uniqueSet).join('');
   }
 }

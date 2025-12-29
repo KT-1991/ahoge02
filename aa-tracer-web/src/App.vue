@@ -1,10 +1,13 @@
 <script setup lang="ts">
-import { ref, onMounted, onUnmounted, nextTick, computed } from 'vue';
+import { ref, onMounted, onUnmounted, nextTick, watch, computed } from 'vue';
 import { InferenceEngine, DEFAULT_CHARS } from './utils/InferenceEngine';
 import { FeatureExtractor } from './utils/FeatureExtractor';
 import { AaFileManager, type AaEntry, type EncodingType, type FileFormat } from './utils/AaFileManager';
 
 declare const cv: any;
+
+// ★追加: 矩形選択の描画用配列
+const boxSelectionRects = ref<Array<{ top: string, left: string, width: string, height: string }>>([]);
 
 // --- Logic State ---
 const engine = new InferenceEngine();
@@ -17,6 +20,9 @@ const processedSource = ref<HTMLCanvasElement | null>(null);
 
 // Paint Buffer (Offscreen Canvas)
 let paintBuffer: HTMLCanvasElement | null = null;
+
+// File I/O Settings
+const loadEncoding = ref<EncodingType>('AUTO');
 
 // Refs & Dims
 const canvasRef = ref<HTMLCanvasElement | null>(null);     
@@ -34,10 +40,13 @@ const aaOutput = computed({
     get: () => projectAAs.value[currentAAIndex.value]?.content || '',
     set: (val) => {
         if (projectAAs.value[currentAAIndex.value]) {
-            projectAAs.value[currentAAIndex.value]!.content = val;
+            projectAAs.value[currentAAIndex.value].content = val;
         }
     }
 });
+
+// ★定義順序修正: historyChars (使用前に配置)
+const historyChars = ref<string[]>([]);
 
 const imageSize = ref({ w: 0, h: 0 });
 const imgTransform = ref({ x: 0, y: 0, scale: 1.0, rotation: 0 });
@@ -49,12 +58,21 @@ const lineWeight = ref(0.6);
 const thinningLevel = ref(0);
 const customFontName = ref('Saitamaar');
 
+// Font Stack
+const fontStack = computed(() => {
+    if (customFontName.value === 'Saitamaar') {
+        return `'MSP_Parallel', 'Saitamaar'`;
+    }
+    return `'${customFontName.value}'`;
+});
+
 // Config
 const config = ref({ 
     allowedChars: DEFAULT_CHARS, 
     useThinSpace: true, 
     safeMode: false,
-    noiseGate: 0.3 
+    noiseGate: 0.3,
+    generationMode: 'hybrid' as 'hybrid' | 'accurate' 
 });
 
 // 文字選択UI
@@ -82,15 +100,453 @@ const targetCharRed = ref('/');
 
 // UI State
 const traceOpacity = ref(30);
-const aaTextColor = ref('#222222');
-const tracePaneRatio = ref(0.6);
+const aaTextColor = ref('#222222');    
+const subTextColor = ref('#ffffff');   
+const tracePaneRatio = ref(0.5); 
 const isResizingPane = ref(false);
 const editorStackRef = ref<HTMLElement | null>(null);
 const isBottomCollapsed = ref(false); 
-const viewMode = ref<'single' | 'split'>('single');
 const showBackgroundImage = ref(true);
 
+// Layout State
+const viewMode = ref<'single' | 'split'>('single');
+const splitDirection = ref<'horizontal' | 'vertical'>('horizontal');
+const isLayoutSwapped = ref(false); 
+const showLayoutMenu = ref(false);
+
+// History System
+const historyStack = ref<string[]>(['']);
+const historyIndex = ref(0);
+const isHistoryNavigating = ref(false);
+
+const pushHistory = (text: string) => {
+    if (historyIndex.value < historyStack.value.length - 1) {
+        historyStack.value = historyStack.value.slice(0, historyIndex.value + 1);
+    }
+    if (historyStack.value[historyIndex.value] === text) return;
+
+    historyStack.value.push(text);
+    historyIndex.value++;
+
+    if (historyStack.value.length > 2000) {
+        historyStack.value.shift();
+        historyIndex.value--;
+    }
+};
+
+const commitHistory = () => {
+    pushHistory(aaOutput.value);
+};
+
+const undo = () => {
+    if (historyIndex.value > 0) {
+        isHistoryNavigating.value = true;
+        historyIndex.value--;
+        aaOutput.value = historyStack.value[historyIndex.value];
+        nextTick(() => isHistoryNavigating.value = false);
+    }
+};
+
+const redo = () => {
+    if (historyIndex.value < historyStack.value.length - 1) {
+        isHistoryNavigating.value = true;
+        historyIndex.value++;
+        aaOutput.value = historyStack.value[historyIndex.value];
+        nextTick(() => isHistoryNavigating.value = false);
+    }
+};
+
+watch(currentAAIndex, () => {
+    historyStack.value = [aaOutput.value];
+    historyIndex.value = 0;
+    isHistoryNavigating.value = false;
+});
+
+const resetHistory = () => {
+    historyStack.value = [aaOutput.value];
+    historyIndex.value = 0;
+};
+
+// Syntax Highlight & Auto History
+const highlightedHTML = ref('');
+let highlightTimer: any = null;
+
+const updateSyntaxHighlight = () => {
+    if (!config.value.safeMode) {
+        highlightedHTML.value = '';
+        return;
+    }
+    if (highlightTimer) clearTimeout(highlightTimer);
+    
+    highlightTimer = setTimeout(() => {
+        const text = aaOutput.value;
+        const escapeHtml = (str: string) => str.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+        const lines = text.split('\n');
+        const processedLines = lines.map(line => {
+            let safeLine = escapeHtml(line);
+            const leadMatch = safeLine.match(/^ +/);
+            let leadLen = 0;
+            let leadStr = "";
+            let restStr = safeLine;
+            if (leadMatch) {
+                leadLen = leadMatch[0].length;
+                leadStr = `<span class="err-lead">${leadMatch[0]}</span>`;
+                restStr = safeLine.substring(leadLen);
+            }
+            const seqStr = restStr
+                .replace(/ {2,}/g, (match) => `<span class="err-seq">${match}</span>`)
+                .replace(/(?:&gt;|＞)+[0-9０-９]+/g, (match) => `<span class="anchor-highlight">${match}</span>`);
+            return leadStr + seqStr;
+        });
+        highlightedHTML.value = processedLines.join('\n');
+    }, 100); 
+};
+
+watch(aaOutput, (newVal) => {
+    updateSyntaxHighlight();
+    if (isHistoryNavigating.value) return; 
+    pushHistory(newVal);
+});
+
+// Caret Sync & Box Selection Helpers
+const activeEditor = ref<'trace' | 'text' | null>(null);
+const caretSyncPos = ref({ x: 0, y: 0 });
+// ★定義順序修正: cursorInfo, lastCursorPos をここで定義
 const cursorInfo = ref({ row: 1, col: 1, charCount: 0, px: 0 });
+const lastCursorPos = ref({ row: 0, col: 0 });
+
+// Box Selection State
+const isAltPressed = ref(false);
+const isBoxSelecting = ref(false);
+const boxSelectPx = ref({ startX: 0, endX: 0, startRow: 0, endRow: 0 });
+const boxSelectStart = ref({ row: 0, col: 0 });
+const boxSelectEnd = ref({ row: 0, col: 0 });
+const showBoxOverlay = ref(false);
+
+const getPosFromIndex = (text: string, index: number) => {
+    const textBefore = text.substring(0, index);
+    const row = (textBefore.match(/\n/g) || []).length;
+    const lastNewLine = textBefore.lastIndexOf('\n');
+    const col = index - (lastNewLine + 1);
+    return { row, col };
+};
+
+const getIndexFromPos = (text: string, row: number, col: number) => {
+    const lines = text.split('\n');
+    if (row >= lines.length) return -1;
+    let index = 0;
+    for (let i = 0; i < row; i++) {
+        index += lines[i].length + 1; 
+    }
+    const lineLen = lines[row].length;
+    const actualCol = Math.min(col, lineLen);
+    return index + actualCol;
+};
+
+// ピクセル計算ヘルパー
+const getPixelWidthOfCol = (row: number, col: number, ctx: CanvasRenderingContext2D) => {
+    const lines = aaOutput.value.split('\n');
+    const line = lines[row] || "";
+    const sub = [...line].slice(0, col).join(''); // サロゲートペア対応
+    return ctx.measureText(sub).width;
+};
+
+const getCaretPixelAt = (row: number, col: number) => {
+    const text = aaOutput.value;
+    const lines = text.split('\n');
+    const line = lines[row] || '';
+    const sub = line.substring(0, col);
+    
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.font = `16px ${fontStack.value.replace(/'/g, '"')}`;
+    const px = Math.round(ctx.measureText(sub).width);
+    return { x: px, y: row * 16 };
+};
+
+// ★修正: 矩形選択の描画更新 (行ごとの矩形)
+const updateBoxSelection = () => {
+    if (!showBoxOverlay.value) {
+        boxSelectionRects.value = [];
+        return;
+    }
+
+    const minR = Math.min(boxSelectPx.value.startRow, boxSelectPx.value.endRow);
+    const maxR = Math.max(boxSelectPx.value.startRow, boxSelectPx.value.endRow);
+    
+    const leftPx = Math.min(boxSelectPx.value.startX, boxSelectPx.value.endX);
+    const rightPx = Math.max(boxSelectPx.value.startX, boxSelectPx.value.endX);
+    const widthPx = Math.max(2, rightPx - leftPx); 
+
+    const rects = [];
+    
+    for (let r = minR; r <= maxR; r++) {
+        rects.push({
+            top: `${r * 16}px`,
+            left: `${leftPx + 16}px`, // padding考慮
+            width: `${widthPx}px`,
+            height: `16px`
+        });
+    }
+    boxSelectionRects.value = rects;
+};
+
+// マウスイベント処理
+const onTextareaMouseDown = (e: MouseEvent, source: 'trace' | 'text') => {
+    activeEditor.value = source;
+    if (isAltPressed.value || isBoxSelecting.value) {
+        isBoxSelecting.value = true;
+        showBoxOverlay.value = true;
+        
+        const textarea = e.target as HTMLTextAreaElement;
+        
+        setTimeout(() => {
+            const selStart = textarea.selectionStart;
+            const { row, col } = getPosFromIndex(textarea.value, selStart);
+            
+            const ctx = document.createElement('canvas').getContext('2d')!;
+            ctx.font = `16px ${fontStack.value.replace(/'/g, '"')}`; 
+            
+            const px = getPixelWidthOfCol(row, col, ctx);
+            
+            boxSelectPx.value.startRow = row;
+            boxSelectPx.value.endRow = row;
+            boxSelectPx.value.startX = px;
+            boxSelectPx.value.endX = px;
+            
+            updateBoxSelection();
+        }, 0);
+    } else {
+        showBoxOverlay.value = false;
+    }
+};
+
+const onTextareaMouseMove = (e: MouseEvent, source: 'trace' | 'text') => {
+    if (e.buttons === 1 && isBoxSelecting.value) {
+        const textarea = e.target as HTMLTextAreaElement;
+        const end = textarea.selectionEnd; 
+        const { row, col } = getPosFromIndex(textarea.value, end);
+        
+        const ctx = document.createElement('canvas').getContext('2d')!;
+        ctx.font = `16px ${fontStack.value.replace(/'/g, '"')}`; 
+
+        const px = getPixelWidthOfCol(row, col, ctx);
+
+        boxSelectPx.value.endRow = row;
+        boxSelectPx.value.endX = px;
+        
+        updateBoxSelection();
+    }
+};
+
+const onTextareaMouseUp = () => {
+    // keep selection
+};
+
+const updateCaretSync = (e: Event | null, source: 'trace' | 'text') => {
+    activeEditor.value = source;
+    if (!e) return;
+    const textarea = e.target as HTMLTextAreaElement;
+    const selStart = textarea.selectionStart;
+    const { row, col } = getPosFromIndex(textarea.value, selStart);
+    
+    if (!isAltPressed.value && !isBoxSelecting.value && e.type === 'mousedown') {
+        showBoxOverlay.value = false;
+    }
+
+    const pos = getCaretPixelAt(row, col);
+    caretSyncPos.value = { x: pos.x + 16, y: pos.y };
+};
+
+// 矩形編集ロジック
+const getIndexFromPixelInLine = (line: string, targetPx: number, ctx: CanvasRenderingContext2D): number => {
+    if (targetPx <= 0) return 0;
+    let currentW = 0;
+    const chars = [...line]; 
+    for (let i = 0; i < chars.length; i++) {
+        const charW = ctx.measureText(chars[i]).width;
+        if (currentW + charW / 2 > targetPx) return i;
+        currentW += charW;
+    }
+    return chars.length;
+};
+
+const getPaddingString = (currentW: number, targetPx: number, ctx: CanvasRenderingContext2D): string => {
+    if (currentW >= targetPx) return "";
+    const spaceW = ctx.measureText(' ').width;
+    const fullSpaceW = ctx.measureText('　').width;
+    const diff = targetPx - currentW;
+    const fullCount = Math.floor(diff / fullSpaceW);
+    let padding = '　'.repeat(fullCount);
+    let currentPadW = fullCount * fullSpaceW;
+    const remaining = diff - currentPadW;
+    const halfCount = Math.round(remaining / spaceW);
+    padding += ' '.repeat(halfCount);
+    return padding;
+};
+
+const copyBoxSelection = async () => {
+    if (!showBoxOverlay.value) return;
+
+    const minR = Math.min(boxSelectPx.value.startRow, boxSelectPx.value.endRow);
+    const maxR = Math.max(boxSelectPx.value.startRow, boxSelectPx.value.endRow);
+    const minX = Math.min(boxSelectPx.value.startX, boxSelectPx.value.endX);
+    const maxX = Math.max(boxSelectPx.value.startX, boxSelectPx.value.endX);
+    
+    const lines = aaOutput.value.split('\n');
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.font = `16px ${fontStack.value.replace(/'/g, '"')}`;
+
+    let result = "";
+    
+    for (let r = minR; r <= maxR; r++) {
+        const line = lines[r] || "";
+        const startIdx = getIndexFromPixelInLine(line, minX, ctx);
+        const endIdx = getIndexFromPixelInLine(line, maxX, ctx);
+        
+        let chunk = [...line].slice(startIdx, endIdx).join('');
+        
+        const currentW = ctx.measureText([...line].slice(0, endIdx).join('')).width;
+        if (currentW < maxX) {
+            const neededPad = getPaddingString(currentW, maxX, ctx);
+            const linePixelW = ctx.measureText(line).width;
+            if (linePixelW < minX) {
+                 chunk = getPaddingString(0, maxX - minX, ctx);
+            } else {
+                chunk += neededPad;
+            }
+        }
+        
+        result += chunk + "\n";
+    }
+    result = result.slice(0, -1);
+    
+    try {
+        await navigator.clipboard.writeText(result);
+        showToastMessage(`Box Copied!`);
+    } catch (e) { console.error(e); }
+};
+
+const pasteBoxSelection = async () => {
+    try {
+        const text = await navigator.clipboard.readText();
+        const decodedText = AaFileManager.decodeEntities(text);
+        const boxLines = decodedText.replace(/\r\n/g, '\n').split('\n');
+        if (boxLines.length === 0) return;
+
+        let targetPx = 0;
+        let startRow = 0;
+
+        if (isBoxSelecting.value) {
+            targetPx = Math.min(boxSelectPx.value.startX, boxSelectPx.value.endX);
+            startRow = Math.min(boxSelectPx.value.startRow, boxSelectPx.value.endRow);
+        } else {
+            const pos = getCaretPixelAt(lastCursorPos.value.row, lastCursorPos.value.col);
+            targetPx = pos.x;
+            startRow = lastCursorPos.value.row;
+        }
+
+        const ctx = document.createElement('canvas').getContext('2d')!;
+        ctx.font = `16px ${fontStack.value.replace(/'/g, '"')}`;
+
+        commitHistory(); 
+
+        const currentLines = aaOutput.value.split('\n');
+        
+        boxLines.forEach((bLine, i) => {
+            const r = startRow + i;
+            let lineContent = currentLines[r] || "";
+            if (r >= currentLines.length) {
+                lineContent = "";
+                currentLines[r] = "";
+            }
+
+            const lineChars = [...lineContent];
+            const currentLineW = ctx.measureText(lineContent).width;
+            
+            let insertIdx = 0;
+            let paddingStr = "";
+
+            if (currentLineW < targetPx) {
+                insertIdx = lineChars.length;
+                paddingStr = getPaddingString(currentLineW, targetPx, ctx);
+            } else {
+                insertIdx = getIndexFromPixelInLine(lineContent, targetPx, ctx);
+            }
+
+            const pasteW = ctx.measureText(bLine).width;
+            const endPx = targetPx + pasteW;
+            
+            let deleteEndIdx = insertIdx;
+            
+            if (currentLineW > targetPx) {
+                deleteEndIdx = getIndexFromPixelInLine(lineContent, endPx, ctx);
+            }
+            
+            const before = lineChars.slice(0, insertIdx).join('');
+            const after = lineChars.slice(deleteEndIdx).join(''); 
+            
+            currentLines[r] = before + paddingStr + bLine + after;
+        });
+        
+        aaOutput.value = currentLines.join('\n');
+        nextTick(() => commitHistory());
+        showToastMessage('Box Pasted (Visual Overwrite)!');
+        
+    } catch (e) { console.error(e); }
+};
+
+// Palette UI State
+const historyPaneRatio = ref(0.35); 
+const isResizingPalette = ref(false);
+const paletteContainerRef = ref<HTMLElement | null>(null);
+
+const startResizePalette = () => {
+    isResizingPalette.value = true;
+    window.addEventListener('mousemove', onResizePalette);
+    window.addEventListener('mouseup', stopResizePalette);
+    document.body.style.cursor = 'row-resize';
+};
+const onResizePalette = (e: MouseEvent) => {
+    if (!paletteContainerRef.value) return;
+    const rect = paletteContainerRef.value.getBoundingClientRect();
+    const offsetY = e.clientY - rect.top;
+    historyPaneRatio.value = Math.min(0.8, Math.max(0.1, offsetY / rect.height));
+};
+const stopResizePalette = () => {
+    isResizingPalette.value = false;
+    window.removeEventListener('mousemove', onResizePalette);
+    window.removeEventListener('mouseup', stopResizePalette);
+    document.body.style.cursor = '';
+};
+
+// Color Picker
+const showColorPicker = ref(false);
+const hueValue = ref(0);
+const presetColors = [
+    '#222222', '#ffffff', '#e60012', '#009944', '#0068b7', 
+    '#f39800', '#fff100', '#8fc31f', '#00b7ee', '#920783'
+];
+
+const swapColors = () => {
+    const temp = aaTextColor.value;
+    aaTextColor.value = subTextColor.value;
+    subTextColor.value = temp;
+};
+
+const updateHue = () => {
+    aaTextColor.value = `hsl(${hueValue.value}, 70%, 50%)`;
+};
+
+const invertColor = () => {
+    let hex = aaTextColor.value;
+    if (hex.startsWith('#')) hex = hex.slice(1);
+    if (hex.length === 3) hex = hex.split('').map(c => c + c).join('');
+    const r = parseInt(hex.substring(0, 2), 16);
+    const g = parseInt(hex.substring(2, 4), 16);
+    const b = parseInt(hex.substring(4, 6), 16);
+    const y = 0.299 * r + 0.587 * g + 0.114 * b;
+    aaTextColor.value = y > 128 ? '#222222' : '#ffffff';
+};
 
 // Menus & Modals
 const showLoadMenu = ref(false);
@@ -98,7 +554,14 @@ const showSaveMenu = ref(false);
 const showGridOverlay = ref(false);
 const showConfigModal = ref(false);
 const showExportModal = ref(false);
+const showPaintModal = ref(false);
 const showDebugModal = ref(false);
+const showPaletteEditor = ref(false); 
+const showCopyMenu = ref(false);
+const showEditMenu = ref(false);
+const showToast = ref(false);
+const toastMessage = ref('');
+const isExportingVideo = ref(false); 
 
 const ghostText = ref('');
 const ghostPos = ref({ x: 0, y: 0 });
@@ -107,9 +570,117 @@ const mirrorRef = ref<HTMLElement | null>(null);
 
 const scrollX = ref(0);
 const scrollY = ref(0);
+const VIEW_SCALE = 1.0; 
+
+// --- ★Palette System (New) ---
+
+interface Category {
+    id: string;
+    name: string;
+    chars: string;
+}
+
+const defaultCategories: Category[] = [
+    { id: '1', name: 'Basic Lines', chars: "─│┌┐└┘├┤┬┴┼━┃┏┓┛┗┣┳┫┻╋" },
+    { id: '2', name: 'Special', chars: "｡､･ﾟヽヾゝゞ〃仝々〆〇ー―‐／＼〜∥｜…‥‘’“”" },
+    { id: '3', name: 'Brackets', chars: "（）〔〕［］｛｝〈〉《》「」『』【】" },
+    { id: '4', name: 'Math', chars: "＋－±×÷＝≠＜＞≦≧∞∴♂♀" },
+    { id: '5', name: 'Greek', chars: "αβγδεζηθικλμνξοπρστυφχψω" },
+    { id: '6', name: 'Cyrillic', chars: "АБВГДЕЁЖЗИЙКЛМНОПРСТУФХЦЧШЩЪЫЬЭЮЯ" },
+    { id: '7', name: 'Face', chars: "∀´｀ωДдノ乙ξ" }
+];
+
+const categories = ref<Category[]>([]);
+const currentCategoryId = ref<string>('1');
+const editingCatId = ref<string | null>(null); 
+
+const loadPaletteFromStorage = () => {
+    const saved = localStorage.getItem('aa_palette_v1');
+    if (saved) {
+        try {
+            const parsed = JSON.parse(saved);
+            if (Array.isArray(parsed)) {
+                categories.value = parsed;
+            } else {
+                categories.value = JSON.parse(JSON.stringify(defaultCategories));
+            }
+        } catch(e) {
+            categories.value = JSON.parse(JSON.stringify(defaultCategories));
+        }
+    } else {
+        categories.value = JSON.parse(JSON.stringify(defaultCategories));
+    }
+    if (categories.value.length > 0) {
+        const exists = categories.value.some(c => c.id === currentCategoryId.value);
+        if (!exists) currentCategoryId.value = categories.value[0].id;
+    }
+};
+loadPaletteFromStorage();
+
+const savePaletteToStorage = () => {
+    localStorage.setItem('aa_palette_v1', JSON.stringify(categories.value));
+};
+
+const currentCategoryData = computed(() => {
+    const found = categories.value.find(c => c.id === currentCategoryId.value);
+    if (found) return found;
+    if (categories.value.length > 0) return categories.value[0];
+    return { id: 'dummy', name: 'Loading...', chars: '' }; 
+});
+
+const editingCategory = computed(() => {
+    return categories.value.find(c => c.id === editingCatId.value);
+});
+
+const addCategory = () => {
+    const newId = Date.now().toString();
+    categories.value.push({ id: newId, name: 'New Category', chars: '' });
+    editingCatId.value = newId;
+    savePaletteToStorage();
+};
+const removeCategory = (id: string) => {
+    if (confirm('Delete this category?')) {
+        categories.value = categories.value.filter(c => c.id !== id);
+        if (editingCatId.value === id) editingCatId.value = null;
+        if (currentCategoryId.value === id && categories.value.length > 0) {
+            currentCategoryId.value = categories.value[0].id;
+        }
+        savePaletteToStorage();
+    }
+};
+const moveCategory = (index: number, direction: -1 | 1) => {
+    const newIndex = index + direction;
+    if (newIndex < 0 || newIndex >= categories.value.length) return;
+    const temp = categories.value[index];
+    categories.value[index] = categories.value[newIndex];
+    categories.value[newIndex] = temp;
+    savePaletteToStorage();
+};
+
+const recordCharHistory = (char: string) => {
+    historyChars.value = historyChars.value.filter(c => c !== char);
+    historyChars.value.unshift(char);
+    if (historyChars.value.length > 50) historyChars.value.pop();
+};
+
+const addCharToOutput = (char: string) => {
+    aaOutput.value += char;
+    recordCharHistory(char);
+    engine.recordUsage(char); 
+};
 
 // --- Lifecycle ---
 onMounted(async () => {
+  updateSyntaxHighlight();
+  historyStack.value = [aaOutput.value];
+
+  window.addEventListener('keydown', (e) => {
+      if (e.key === 'Alt') isAltPressed.value = true;
+  });
+  window.addEventListener('keyup', (e) => {
+      if (e.key === 'Alt') isAltPressed.value = false;
+  });
+
   window.addEventListener('mouseup', onGlobalMouseUp);
   window.addEventListener('mousemove', onGlobalMouseMove);
 
@@ -119,14 +690,14 @@ onMounted(async () => {
       status.value = 'LOADING AI...';
       try {
         await engine.init('/aa_model_a.onnx', '/Saitamaar.ttf', '/aa_chars.json', 'classifier', 'Saitamaar');
-        // ★追加: JSONから読み込んだ文字リストをConfigに適用
+        
+        // ★重要: メトリクスの初期化
+        engine.updateFontMetrics('Saitamaar', config.value.allowedChars);
+
         const loadedChars = engine.getLoadedCharList();
         if (loadedChars.length > 0) {
-            // スペースは必須なので先頭に追加し、残りを結合
             const newSet = ' ' + loadedChars;
             config.value.allowedChars = newSet;
-            
-            // 文字選択パレットも更新 (スペース以外を表示)
             allCharCandidates.value = Array.from(loadedChars);
         }
 
@@ -198,6 +769,11 @@ const renderLayer = (targetCanvas: HTMLCanvasElement, source: HTMLImageElement |
     ctx.scale(imgTransform.value.scale, imgTransform.value.scale);
     ctx.drawImage(source, 0, 0);
     ctx.restore();
+};
+
+const renderCanvas = (canvas: HTMLCanvasElement | null) => {
+    if (!canvas) return;
+    renderLayer(canvas, processedSource.value || sourceImage.value);
 };
 
 const updateImageTransform = async () => { 
@@ -348,10 +924,10 @@ const performFloodFill = (imgX: number, imgY: number, isEraser: boolean) => {
                 if (isEraser) {
                     data[idx + 3] = 0;
                 } else {
-                    data[idx] = color[0]!;
-                    data[idx+1] = color[1]!;
-                    data[idx+2] = color[2]!;
-                    data[idx+3] = color[3]!;
+                    data[idx] = color[0];
+                    data[idx+1] = color[1];
+                    data[idx+2] = color[2];
+                    data[idx+3] = color[3];
                 }
             }
         }
@@ -361,7 +937,7 @@ const performFloodFill = (imgX: number, imgY: number, isEraser: boolean) => {
     renderAllCanvases();
 };
 
-// --- Process Logic (Separation of Prediction and Overwrite) ---
+// --- Process Logic ---
 
 const processImage = async () => {
   if (!sourceImage.value || isProcessing.value) return;
@@ -373,32 +949,33 @@ const processImage = async () => {
       ctx.clearRect(0, 0, maskCanvasRef.value.width, maskCanvasRef.value.height);
   }
   
-  let maskData: Uint8ClampedArray | null = null;
+  let tempCtx: CanvasRenderingContext2D | null = null;
+  
   if (paintBuffer) {
       const tempCvs = document.createElement('canvas');
       tempCvs.width = canvasRef.value.width;
       tempCvs.height = canvasRef.value.height;
-      const tCtx = tempCvs.getContext('2d', { willReadFrequently: true })!;
+      tempCtx = tempCvs.getContext('2d', { willReadFrequently: true })!;
       
-      tCtx.save();
-      tCtx.translate(imgTransform.value.x, imgTransform.value.y);
-      tCtx.rotate(imgTransform.value.rotation * Math.PI / 180);
-      tCtx.scale(imgTransform.value.scale, imgTransform.value.scale);
-      tCtx.drawImage(paintBuffer, 0, 0);
-      tCtx.restore();
-      
-      maskData = tCtx.getImageData(0, 0, tempCvs.width, tempCvs.height).data;
+      tempCtx.save();
+      tempCtx.translate(imgTransform.value.x, imgTransform.value.y);
+      tempCtx.rotate(imgTransform.value.rotation * Math.PI / 180);
+      tempCtx.scale(imgTransform.value.scale, imgTransform.value.scale);
+      tempCtx.drawImage(paintBuffer, 0, 0);
+      tempCtx.restore();
   }
 
   renderLayer(canvasRef.value, processedSource.value || sourceImage.value);
   
+  // ★重要: メトリクス更新
+  engine.updateFontMetrics(customFontName.value, config.value.allowedChars);
+
   setTimeout(async () => {
     try {
       const fullFeatures = FeatureExtractor.generate9ChInput(
           canvasRef.value!, 
           lineWeight.value, 
           thinningLevel.value
-          // maskCanvasRef.value! を渡さない = AIは純粋な線だけを見る
       );
       
       visualizeFeatureMap(fullFeatures, canvasRef.value!.width, canvasRef.value!.height);
@@ -410,6 +987,10 @@ const processImage = async () => {
       const imgBottom = (imgTransform.value.y + sourceImage.value!.height * imgTransform.value.scale) + 200; 
       const scanLimitY = Math.min(h, imgBottom);
 
+      // コンテキスト準備
+      const ctx = document.createElement('canvas').getContext('2d')!;
+      ctx.font = `16px "${customFontName.value}"`;
+
       for (let y = cropH / 2; y < scanLimitY - cropH / 2; y += lineH) {
          status.value = `ROW ${Math.floor(y/16)}`;
          
@@ -417,9 +998,20 @@ const processImage = async () => {
          const startIdx = (y - cropH/2) * w * 9;
          const lineFeat = fullFeatures.subarray(startIdx, startIdx + lineLen);
          
+         let rowMaskData: Uint8ClampedArray | null = null;
+         if (tempCtx) {
+             const srcY = Math.floor(y - cropH/2);
+             if (srcY >= 0 && srcY + 32 <= h) {
+                 rowMaskData = tempCtx.getImageData(0, srcY, w, 32).data;
+             }
+         }
+         
+         // ★engine.solveLine にパラメータを渡す
          const lineText = await engine.solveLine(
              lineFeat, w, targetCharBlue.value, targetCharRed.value, 
-             maskData, y, config.value.noiseGate
+             rowMaskData, y, config.value.noiseGate,
+             config.value.generationMode, // 'hybrid' or 'accurate'
+             ctx
          );
          
          result += lineText + "\n";
@@ -427,6 +1019,7 @@ const processImage = async () => {
          await new Promise(r => setTimeout(r, 0));
       }
       status.value = 'DONE'; sidebarTab.value = 'palette';
+      updateSyntaxHighlight();
     } catch (err) { console.error(err); status.value = 'ERROR'; } finally { isProcessing.value = false; }
   }, 50);
 };
@@ -445,14 +1038,14 @@ const visualizeFeatureMap = (features: Float32Array, width: number, height: numb
     const len = width * height;
     
     for (let i = 0; i < len; i += 10) {
-        const val = features[i * 9]!;
+        const val = features[i * 9];
         if (val < minVal) minVal = val;
         if (val > maxVal) maxVal = val;
     }
     if (maxVal === minVal) { maxVal = minVal + 1; }
     
     for (let i = 0; i < len; i++) {
-        const val = features[i * 9]!; 
+        const val = features[i * 9]; 
         let color = Math.floor((val - minVal) / (maxVal - minVal) * 255);
         if (color < 0) color = 0;
         if (color > 255) color = 255;
@@ -469,6 +1062,24 @@ const visualizeFeatureMap = (features: Float32Array, width: number, height: numb
 // --- Input Handling ---
 
 const onKeyDown = (e: KeyboardEvent) => {
+    if (e.ctrlKey && e.key === 'c' && showBoxOverlay.value) {
+        e.preventDefault();
+        copyBoxSelection();
+        return;
+    }
+
+    if (e.ctrlKey) {
+        if (e.key === 'z') {
+            e.preventDefault();
+            undo();
+            return;
+        } else if (e.key === 'y' || (e.shiftKey && e.key === 'Z')) {
+            e.preventDefault();
+            redo();
+            return;
+        }
+    }
+
     if (e.altKey) {
         if (e.key === 'ArrowLeft') { e.preventDefault(); shiftSpace('narrow'); return; } 
         else if (e.key === 'ArrowRight') { e.preventDefault(); shiftSpace('wide'); return; }
@@ -494,9 +1105,42 @@ const onKeyPress = (e: KeyboardEvent) => {
     }
 };
 
-const onInput = (e: Event) => { updateGhostDebounced(); updateCursorInfo(e); };
-const onKeyUp = () => { updateCursorInfo(null); };
-const onClickText = () => { updateGhost(); updateCursorInfo(null); };
+const onInput = (e: Event) => { 
+    updateGhostDebounced(); 
+    updateCursorInfo(e); 
+    updateCaretSync(e, activeEditor.value || 'text');
+};
+const onKeyUp = (e: KeyboardEvent) => { 
+    updateCursorInfo(null); 
+    updateCaretSync(e, activeEditor.value || 'text');
+};
+const onClickText = (e: MouseEvent) => { 
+    updateGhost(); 
+    updateCursorInfo(null);
+};
+
+const onPaste = (e: ClipboardEvent) => {
+    e.preventDefault();
+    const text = e.clipboardData?.getData('text/plain') || '';
+    const decoded = AaFileManager.decodeEntities(text);
+    const textarea = e.target as HTMLTextAreaElement;
+    const start = textarea.selectionStart;
+    const end = textarea.selectionEnd;
+    const current = aaOutput.value;
+    
+    commitHistory();
+
+    aaOutput.value = current.substring(0, start) + decoded + current.substring(end);
+    
+    nextTick(() => {
+        textarea.selectionStart = textarea.selectionEnd = start + decoded.length;
+        engine.recordUsage(decoded);
+        updateGhost();
+        const lastChar = decoded.slice(-1);
+        if(lastChar) recordCharHistory(lastChar);
+        commitHistory();
+    });
+};
 
 const insertGhostText = () => {
     const textarea = document.querySelector('.aa-textarea') as HTMLTextAreaElement;
@@ -504,7 +1148,12 @@ const insertGhostText = () => {
     const start = textarea.selectionStart; const end = textarea.selectionEnd;
     const text = textarea.value; const insert = ghostText.value;
     aaOutput.value = text.substring(0, start) + insert + text.substring(end);
-    nextTick(() => { textarea.selectionStart = textarea.selectionEnd = start + insert.length; engine.recordUsage(insert); updateGhost(); });
+    nextTick(() => { 
+        textarea.selectionStart = textarea.selectionEnd = start + insert.length; 
+        engine.recordUsage(insert); 
+        updateGhost(); 
+        updateSyntaxHighlight();
+    });
 };
 let debounceTimer: any = null;
 const updateGhostDebounced = () => { if (debounceTimer) clearTimeout(debounceTimer); debounceTimer = setTimeout(updateGhost, 100); };
@@ -562,6 +1211,7 @@ const updateGhost = async () => {
 };
 
 const onScroll = (e: Event) => { const target = e.target as HTMLElement; scrollX.value = target.scrollLeft; scrollY.value = target.scrollTop; };
+const getPointerPos = (e: MouseEvent, canvas: HTMLCanvasElement) => { const rect = canvas.getBoundingClientRect(); const scaleX = canvas.width / rect.width; const scaleY = canvas.height / rect.height; return { x: (e.clientX - rect.left) * scaleX, y: (e.clientY - rect.top) * scaleY }; };
 const onWheel = (e: WheelEvent) => { if (!sourceImage.value || sidebarTab.value !== 'image') return; e.preventDefault(); const zoomSpeed = 0.001; const delta = -e.deltaY * zoomSpeed; const newScale = Math.max(0.1, imgTransform.value.scale + delta); imgTransform.value.scale = newScale; updateCanvasDimensions(); };
 
 // --- 1px Shift Logic ---
@@ -622,7 +1272,6 @@ const shiftSpace = (direction: 'narrow' | 'wide') => {
     nextTick(() => { const newPos = lineStart + prefix.length + newSpacer.length; textarea.selectionStart = textarea.selectionEnd = newPos; updateCursorInfo(null); });
 };
 const updateCursorInfo = (e: Event | null) => {
-    console.log(e);
     const textarea = document.querySelector('.aa-textarea') as HTMLTextAreaElement;
     if (!textarea) return;
     const val = textarea.value; const sel = textarea.selectionStart;
@@ -635,20 +1284,157 @@ const updateCursorInfo = (e: Event | null) => {
     ctx.font = `12pt "${customFontName.value}"`;
     const px = Math.round(ctx.measureText(lineText).width);
     cursorInfo.value = { row, col, charCount: val.length, px };
+    lastCursorPos.value = { row: row - 1, col }; 
+};
+
+// --- ★追加: テキスト編集機能 (Edit Menu) ---
+const applyTextEdit = (type: string) => {
+    commitHistory();
+
+    const text = aaOutput.value;
+    const lines = text.split('\n');
+    let newText = text;
+
+    if (type === 'add-end-space') {
+        newText = lines.map(l => l + '　').join('\n');
+    } else if (type === 'trim-end') {
+        newText = lines.map(l => l.replace(/[ 　\u2009]+$/, '')).join('\n');
+    } else if (type === 'add-start-space') {
+        newText = lines.map(l => '　' + l).join('\n');
+    } else if (type === 'trim-start') {
+        newText = lines.map(l => l.replace(/^　/, '')).join('\n');
+    } else if (type === 'remove-empty') {
+        newText = lines.filter(l => l.length > 0).join('\n');
+    } else if (type === 'del-last-char') {
+        newText = lines.map(l => [...l].slice(0, -1).join('')).join('\n');
+    } else if (type === 'align-right') {
+        const ctx = document.createElement('canvas').getContext('2d')!;
+        ctx.font = `16px "${customFontName.value}"`; 
+        
+        let maxW = 0;
+        const measured = lines.map(l => {
+            const clean = l.replace(/[ 　\u2009\|]+$/, '');
+            const w = ctx.measureText(clean).width;
+            if (w > maxW) maxW = w;
+            return { text: clean, width: w };
+        });
+        
+        const fullW = ctx.measureText('　').width;
+        const halfW = ctx.measureText(' ').width;
+        
+        newText = measured.map(m => {
+            let diff = maxW - m.width;
+            let spacer = '';
+            const fullCount = Math.floor(diff / fullW);
+            spacer += '　'.repeat(fullCount);
+            diff -= fullCount * fullW;
+            if (diff > halfW * 0.5) {
+                spacer += ' ';
+            }
+            return m.text + spacer + '|';
+        }).join('\n');
+    }
+
+    aaOutput.value = newText;
+    showEditMenu.value = false;
+    
+    nextTick(() => commitHistory());
+    showToastMessage('Applied!');
 };
 
 // --- File I/O ---
-// ★修正: 変数定義を追加
-const loadEncoding = ref<EncodingType>('AUTO');
+// Copy Menu
+const triggerCopy = async (mode: 'normal' | 'bbs') => {
+    let text = aaOutput.value;
+    if (mode === 'bbs') {
+        text = AaFileManager.encodeToBbsSafe(text);
+    }
+    try {
+        await navigator.clipboard.writeText(text);
+        showToastMessage(mode === 'bbs' ? 'Copied (BBS Safe)!' : 'Copied!');
+    } catch (err) {
+        console.error('Copy failed', err);
+        showToastMessage('Copy Failed');
+    }
+    showCopyMenu.value = false;
+};
+const showToastMessage = (msg: string) => {
+    toastMessage.value = msg;
+    showToast.value = true;
+    setTimeout(() => { showToast.value = false; }, 2000);
+};
+
+// ★追加: タイムラプス動画生成
+const generateTimelapse = async () => {
+    if (historyStack.value.length < 2) return;
+    isExportingVideo.value = true;
+    showToastMessage('Generating Timelapse...');
+    showExportModal.value = false;
+
+    const cvs = document.createElement('canvas');
+    cvs.width = 1280;
+    cvs.height = 720;
+    const ctx = cvs.getContext('2d')!;
+
+    const stream = cvs.captureStream(30); 
+    const recorder = new MediaRecorder(stream, { mimeType: 'video/webm' });
+    const chunks: Blob[] = [];
+    recorder.ondataavailable = (e) => chunks.push(e.data);
+    recorder.start();
+
+    const font = `16px "${customFontName.value}"`;
+    const bgColor = '#ffffff';
+    const textColor = '#222222';
+    const lineHeight = 16;
+    const padding = 20;
+
+    for (let i = 0; i < historyStack.value.length; i++) {
+        await new Promise(r => setTimeout(r, 30)); 
+
+        const text = historyStack.value[i];
+        
+        ctx.fillStyle = bgColor;
+        ctx.fillRect(0, 0, cvs.width, cvs.height);
+
+        ctx.font = font;
+        ctx.fillStyle = textColor;
+        ctx.textBaseline = 'top';
+        
+        const lines = text.split('\n');
+        for (let j = 0; j < lines.length; j++) {
+            ctx.fillText(lines[j], padding, padding + j * lineHeight);
+        }
+        
+        if (i % 50 === 0) {
+            toastMessage.value = `Generating... ${Math.floor((i / historyStack.value.length) * 100)}%`;
+        }
+    }
+
+    recorder.stop();
+    recorder.onstop = () => {
+        const blob = new Blob(chunks, { type: 'video/webm' });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = `timelapse_${Date.now()}.webm`;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+        
+        isExportingVideo.value = false;
+        showToastMessage('Timelapse Downloaded!');
+    };
+};
 
 const onFileSelected = async (e: Event) => {
     const file = (e.target as HTMLInputElement).files?.[0]; if (!file) return;
-    try { const loaded = await AaFileManager.loadFile(file, loadEncoding.value); if (loaded.length > 0) { projectAAs.value = loaded; currentAAIndex.value = 0; status.value = `LOADED ${loaded.length} AAs`; } } catch (err) { console.error(err); status.value = 'LOAD ERROR'; }
+    try { const loaded = await AaFileManager.loadFile(file, loadEncoding.value); if (loaded.length > 0) { projectAAs.value = loaded; currentAAIndex.value = 0; status.value = `LOADED ${loaded.length} AAs`; resetHistory(); } } catch (err) { console.error(err); status.value = 'LOAD ERROR'; }
     (e.target as HTMLInputElement).value = '';
 };
 const onSaveFile = (format: FileFormat, encoding: EncodingType) => { const ext = format === 'AST' ? '.ast' : '.mlt'; const name = `aa_project${ext}`; AaFileManager.saveFile(projectAAs.value, encoding, format, name); showSaveMenu.value = false; };
 const addNewAA = () => { const num = projectAAs.value.length + 1; projectAAs.value.push({ title: `Untitled ${num}`, content: '' }); currentAAIndex.value = projectAAs.value.length - 1; showGridOverlay.value = false; };
-const deleteAA = (idx: number) => { if (projectAAs.value.length <= 1) { projectAAs.value[0]!.content = ''; projectAAs.value[0]!.title = 'Untitled 1'; return; } projectAAs.value.splice(idx, 1); if (currentAAIndex.value >= projectAAs.value.length) { currentAAIndex.value = projectAAs.value.length - 1; } };
+const deleteAA = (idx: number) => { if (projectAAs.value.length <= 1) { projectAAs.value[0].content = ''; projectAAs.value[0].title = 'Untitled 1'; return; } projectAAs.value.splice(idx, 1); if (currentAAIndex.value >= projectAAs.value.length) { currentAAIndex.value = projectAAs.value.length - 1; } };
 const selectAA = (idx: number) => { currentAAIndex.value = idx; showGridOverlay.value = false; };
 const onFileChange = async (e: Event) => { const file = (e.target as HTMLInputElement).files?.[0]; if (!file || !isReady.value) return; loadImageFromFile(file); };
 const loadImageFromFile = (file: File) => {
@@ -656,7 +1442,6 @@ const loadImageFromFile = (file: File) => {
   img.onload = async () => {
     sourceImage.value = img; imageSize.value = { w: img.width, h: img.height };
     initPaintBuffer(img.width, img.height);
-    // モーダルを使わず、サイドバーをImageタブに切り替える仕様
     sidebarTab.value = 'image'; paintMode.value = 'move';
     await nextTick();
     imgTransform.value = { x: 0, y: 0, scale: 1.0, rotation: 0 };
@@ -696,9 +1481,35 @@ const onConfigUpdate = () => {
     engine.updateAllowedChars(config.value.allowedChars);
     initSpaceMetrics();
 };
-const startResizePane = () => { isResizingPane.value = true; window.addEventListener('mousemove', onResizePane); window.addEventListener('mouseup', stopResizePane); document.body.style.cursor = 'row-resize'; };
-const onResizePane = (e: MouseEvent) => { if (!editorStackRef.value) return; const rect = editorStackRef.value.getBoundingClientRect(); const offsetY = e.clientY - rect.top; tracePaneRatio.value = Math.min(0.9, Math.max(0.1, offsetY / rect.height)); };
+
+// Layout Control
+const startResizePane = () => { isResizingPane.value = true; window.addEventListener('mousemove', onResizePane); window.addEventListener('mouseup', stopResizePane); 
+    document.body.style.cursor = splitDirection.value === 'horizontal' ? 'row-resize' : 'col-resize';
+};
+const onResizePane = (e: MouseEvent) => { 
+    if (!editorStackRef.value) return; 
+    const rect = editorStackRef.value.getBoundingClientRect(); 
+    if (splitDirection.value === 'horizontal') {
+        const offsetY = e.clientY - rect.top; 
+        tracePaneRatio.value = Math.min(0.9, Math.max(0.1, offsetY / rect.height)); 
+    } else {
+        const offsetX = e.clientX - rect.left;
+        tracePaneRatio.value = Math.min(0.9, Math.max(0.1, offsetX / rect.width));
+    }
+};
 const stopResizePane = () => { isResizingPane.value = false; window.removeEventListener('mousemove', onResizePane); window.removeEventListener('mouseup', stopResizePane); document.body.style.cursor = ''; };
+
+const toggleLayout = (mode: 'single' | 'split-h' | 'split-v') => {
+    if (mode === 'single') {
+        viewMode.value = 'single';
+        showLayoutMenu.value = false;
+        return;
+    }
+    viewMode.value = 'split';
+    splitDirection.value = mode === 'split-h' ? 'horizontal' : 'vertical';
+    showLayoutMenu.value = false;
+};
+
 const triggerLoad = (enc: EncodingType) => { loadEncoding.value = enc; document.getElementById('fileInput')?.click(); showLoadMenu.value = false; };
 const processSourceImage = () => {
     if (!sourceImage.value) return;
@@ -716,21 +1527,53 @@ const processSourceImage = () => {
 </script>
 
 <template>
-  <div class="app-root" :style="{ '--aa-text-color': aaTextColor, '--font-aa': `'${customFontName}'` }">
+  <div class="app-root" :style="{ '--aa-text-color': aaTextColor, '--font-aa': fontStack }">
     <header class="app-header">
         <div class="brand"><div class="status-indicator" :class="{ ready: isReady, processing: isProcessing }"></div>Cozy Craft AA</div>
         <div class="visual-controls">
             <button class="nav-icon-btn" @click="showDebugModal = true" title="Debug View">👁️ Debug</button>
             <button class="nav-icon-btn" @click="showConfigModal = true" title="AI Config">⚙️ Config</button>
-            <button class="icon-btn" @click="aaTextColor = aaTextColor==='#ffffff'?'#222222':'#ffffff'">◑</button>
+            
+            <div class="color-control-group">
+                <button class="icon-btn tiny" @click="swapColors" title="Swap Colors">⇄</button>
+                <div class="dual-swatch-container">
+                    <div class="swatch-back" :style="{ background: subTextColor }" @click="swapColors"></div>
+                    <button class="swatch-front" 
+                        :style="{ background: aaTextColor }" 
+                        @click="showColorPicker = !showColorPicker"
+                    ></button>
+                </div>
+                <button class="icon-btn tiny" @click="invertColor" title="Invert B/W" style="margin-left:5px;">◑</button>
+
+                <div class="color-picker-popover" v-if="showColorPicker">
+                    <div class="color-grid">
+                        <button v-for="c in presetColors" :key="c" class="color-swatch" :style="{ background: c }" @click="aaTextColor = c; showColorPicker = false"></button>
+                    </div>
+                    <div class="color-slider-row">
+                        <span class="label">HUE</span>
+                        <input type="range" min="0" max="360" v-model="hueValue" @input="updateHue" class="hue-slider">
+                    </div>
+                    <div class="color-custom-row">
+                        <span style="font-size:0.8rem; color:#666;">Custom:</span>
+                        <input type="color" v-model="aaTextColor" class="color-input">
+                    </div>
+                </div>
+            </div>
         </div>
     </header>
 
     <div class="workspace">
-        <main class="editor-stack" ref="editorStackRef">
-            <div class="editor-card trace-card" :style="{ flex: isBottomCollapsed ? '1' : `0 0 ${tracePaneRatio * 100}%` }">
+        <main class="editor-stack" ref="editorStackRef" 
+              :style="{ flexDirection: splitDirection === 'horizontal' ? 'column' : 'row' }">
+            
+            <div class="editor-card trace-card" 
+                 :style="{ 
+                     flex: viewMode === 'single' ? '1' : `0 0 ${tracePaneRatio * 100}%`,
+                     order: isLayoutSwapped ? 3 : 1
+                 }"
+                 @click="activeEditor = 'trace'">
                 <div class="card-header">
-                    <input v-model="projectAAs[currentAAIndex]!.title" class="aa-title-input" placeholder="AA Title" />
+                    <input v-model="projectAAs[currentAAIndex].title" class="aa-title-input" placeholder="AA Title" />
                     <div class="card-actions">
                         <span v-if="!sourceImage" class="hint">Load Image from Sidebar →</span>
                     </div>
@@ -759,25 +1602,84 @@ const processSourceImage = () => {
                                     @wheel="onWheel"></canvas>
                         </div>
 
+                        <div v-if="viewMode === 'split' && activeEditor === 'text'" 
+                             class="remote-caret" 
+                             :style="{ top: caretSyncPos.y + 'px', left: caretSyncPos.x + 'px' }"></div>
+
+                        <div class="box-overlay-container" v-show="showBoxOverlay">
+                            <div v-for="(rect, i) in boxSelectionRects" :key="i" class="box-selection-line" :style="rect"></div>
+                        </div>
+
                         <div class="ghost-layer" v-show="isGhostVisible && sidebarTab === 'palette'" :style="{ width: '100%', height: '100%' }">
                             <span class="ghost-text" :style="{ left: ghostPos.x + 'px', top: ghostPos.y + 'px' }">{{ ghostText }}</span>
                         </div>
                         
                         <textarea class="aa-textarea" 
+                                  :class="{ 'box-mode-active': isBoxSelecting }"
                                   v-model="aaOutput" 
-                                  @keydown="onKeyDown" @keypress="onKeyPress" @input="onInput" @click="onClickText" @keyup="onKeyUp"
+                                  @keydown="onKeyDown" @keypress="onKeyPress" 
+                                  @input="onInput" 
+                                  @click="onClickText; updateCaretSync($event, 'trace')" 
+                                  @keyup="onKeyUp" 
+                                  @focus="activeEditor = 'trace'"
+                                  @mousedown="onTextareaMouseDown($event, 'trace')"
+                                  @mousemove="onTextareaMouseMove($event, 'trace')"
+                                  @mouseup="onTextareaMouseUp"
+                                  @paste="onPaste"
                                   placeholder="Type or Drag Image Here..."
-                                  :style="{ pointerEvents: sidebarTab === 'image' ? 'none' : 'auto', opacity: sidebarTab === 'image' ? 0.3 : 1 }"
+                                  :style="{ 
+                                      color: aaTextColor,
+                                      pointerEvents: sidebarTab === 'image' ? 'none' : 'auto', 
+                                      opacity: sidebarTab === 'image' ? 0.3 : 1 
+                                  }"
                         ></textarea>
                     </div>
                 </div>
             </div>
 
-            <div v-show="viewMode === 'split'" class="resize-handle" @mousedown.prevent="startResizePane" :class="{ active: isResizingPane }">
+            <div v-show="viewMode === 'split'" 
+                 class="resize-handle" 
+                 @mousedown.prevent="startResizePane" 
+                 :class="{ 
+                     active: isResizingPane,
+                     'handle-v': splitDirection === 'vertical'
+                 }"
+                 :style="{ order: 2 }">
                 <div class="handle-bar"></div>
             </div>
-            <div v-show="viewMode === 'split'" class="editor-card text-card" style="flex: 1;">
-                <div class="aa-canvas-wrapper"><textarea class="aa-textarea" v-model="aaOutput"></textarea></div>
+
+            <div v-show="viewMode === 'split'" 
+                 class="editor-card text-card" 
+                 :style="{ 
+                     flex: 1,
+                     order: isLayoutSwapped ? 1 : 3 
+                 }"
+                 @click="activeEditor = 'text'">
+                <div class="aa-canvas-wrapper">
+                    <div class="aa-highlight-layer" v-html="highlightedHTML"></div>
+
+                    <div v-if="viewMode === 'split' && activeEditor === 'trace'" 
+                         class="remote-caret" 
+                         :style="{ top: caretSyncPos.y + 'px', left: caretSyncPos.x + 'px' }"></div>
+                    
+                    <div class="box-overlay-container" v-show="showBoxOverlay">
+                        <div v-for="(rect, i) in boxSelectionRects" :key="i" class="box-selection-line" :style="rect"></div>
+                    </div>
+
+                    <textarea class="aa-textarea" 
+                              :class="{ 'box-mode-active': isBoxSelecting }"
+                              v-model="aaOutput" 
+                              @keydown="onKeyDown" @keypress="onKeyPress" 
+                              @input="updateCaretSync($event, 'text')"
+                              @click="updateCaretSync($event, 'text')"
+                              @keyup="updateCaretSync($event, 'text')"
+                              @focus="activeEditor = 'text'"
+                              @mousedown="onTextareaMouseDown($event, 'text')"
+                              @mousemove="onTextareaMouseMove($event, 'text')"
+                              @mouseup="onTextareaMouseUp"
+                              @paste="onPaste"
+                              style="color: #222222;"></textarea>
+                </div>
             </div>
         </main>
 
@@ -787,18 +1689,53 @@ const processSourceImage = () => {
                 <button :class="{ active: sidebarTab==='image' }" @click="sidebarTab='image'">🎨 Image</button>
             </div>
 
-            <div v-show="sidebarTab==='palette'" class="panel-box" style="flex:1;">
-                <div class="panel-header"><select class="category-select"><option>📂 Custom</option></select></div>
-                <div class="grid-area">
-                    <div class="char-grid">
-                        <div class="key" v-for="c in config.allowedChars" :key="c" @click="aaOutput += c">{{ c }}</div>
+            <div v-show="sidebarTab==='palette'" class="panel-box palette-container" ref="paletteContainerRef">
+                <div class="history-section" :style="{ flex: `0 0 ${historyPaneRatio * 100}%`, minHeight: '0' }">
+                    <div class="panel-header">
+                        <span class="header-title">🕒 History</span>
+                        <span class="header-badge">{{ historyChars?.length || 0 }}</span>
+                    </div>
+                    <div class="grid-scroll-area history-bg">
+                        <div class="char-grid-dense">
+                            <button v-for="c in historyChars" :key="c" class="key-dense" @click="addCharToOutput(c)">{{ c }}</button>
+                        </div>
                     </div>
                 </div>
-                <div class="panel-header" style="margin-top:10px; border-top:1px solid #eee;"><span>📚 Project</span></div>
-                <div class="aa-list" style="height: 200px; flex:none;">
-                    <div v-for="(aa, idx) in projectAAs" :key="idx" class="aa-list-item" :class="{ active: idx === currentAAIndex }" @click="selectAA(idx)">
-                        <span class="aa-list-title">{{ aa.title }}</span>
-                        <button v-if="idx === currentAAIndex" @click.stop="deleteAA(idx)" class="del-btn">×</button>
+
+                <div class="palette-resize-handle" 
+                     @mousedown.prevent="startResizePalette"
+                     :class="{ active: isResizingPalette }">
+                     <div class="handle-bar"></div>
+                </div>
+
+                <div class="library-section" style="flex:1; min-height:0;">
+                    <div class="panel-header">
+                        <select v-model="currentCategoryId" class="category-selector">
+                            <option v-for="cat in categories" :key="cat.id" :value="cat.id">📂 {{ cat.name }}</option>
+                        </select>
+                        <button class="icon-btn tiny" @click="showPaletteEditor = true" title="Edit Palette">✏️</button>
+                    </div>
+                    <div class="grid-scroll-area">
+                        <div class="char-grid-dense">
+                            <button 
+                                v-for="c in (currentCategoryData?.chars || '').split('')" 
+                                :key="c" 
+                                class="key-dense" 
+                                @click="addCharToOutput(c)"
+                            >
+                                {{ c }}
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="project-list-section">
+                    <div class="panel-header" style="border-top:1px solid #ddd;"><span>📚 Project</span></div>
+                    <div class="aa-list">
+                        <div v-for="(aa, idx) in projectAAs" :key="idx" class="aa-list-item" :class="{ active: idx === currentAAIndex }" @click="selectAA(idx)">
+                            <span class="aa-list-title">{{ aa.title }}</span>
+                            <button v-if="idx === currentAAIndex" @click.stop="deleteAA(idx)" class="del-btn">×</button>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -856,12 +1793,53 @@ const processSourceImage = () => {
                         <input type="range" min="0" max="3" v-model.number="thinningLevel">
                         <label style="margin-top:10px;">Noise Gate: {{ config.noiseGate }}</label>
                         <input type="range" min="0" max="2.0" step="0.1" v-model.number="config.noiseGate">
+                        <label class="check-row" style="margin-top:10px; font-size:0.8rem;"><input type="checkbox" v-model="config.generationMode" true-value="hybrid" false-value="accurate"><span>Hybrid Mode (Faster)</span></label>
                         <button class="studio-btn outline w-100" @click="processImage" :disabled="isProcessing" style="margin-top:10px;">✨ Update Features</button>
                     </div>
                 </div>
                 <div v-else class="placeholder-text" style="color:#888;">No Image Loaded</div>
             </div>
         </aside>
+    </div>
+
+    <div class="modal-backdrop" v-if="showPaletteEditor" @click.self="showPaletteEditor = false">
+        <div class="modal-window" style="width: 700px; height: 500px; display:flex; flex-direction:column;">
+            <div class="studio-header"><h2>✏️ Edit Palette</h2><button class="close-btn" @click="showPaletteEditor = false">✕</button></div>
+            <div style="flex:1; display:flex; overflow:hidden;">
+                <div style="width:220px; border-right:1px solid #ddd; display:flex; flex-direction:column; background:#f9f9f9;">
+                    <div style="padding:10px; border-bottom:1px solid #ddd;">
+                        <button class="studio-btn primary w-100" @click="addCategory">+ New Category</button>
+                    </div>
+                    <div style="flex:1; overflow-y:auto;">
+                        <div v-for="(cat, idx) in categories" :key="cat.id" 
+                             class="palette-list-item" 
+                             :class="{ active: editingCatId === cat.id }"
+                             @click="editingCatId = cat.id">
+                            <span class="cat-name">{{ cat.name }}</span>
+                            <div class="cat-actions" v-if="editingCatId === cat.id">
+                                <button @click.stop="moveCategory(idx, -1)" :disabled="idx===0">↑</button>
+                                <button @click.stop="moveCategory(idx, 1)" :disabled="idx===(categories?.length||0)-1">↓</button>
+                                <button @click.stop="removeCategory(cat.id)" class="del">×</button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+                <div style="flex:1; display:flex; flex-direction:column; padding:20px;" v-if="editingCategory">
+                    <div class="control-group">
+                        <label>Category Name</label>
+                        <input type="text" v-model="editingCategory.name" @change="savePaletteToStorage" style="width:100%; padding:5px; font-weight:bold;">
+                    </div>
+                    <div class="control-group" style="flex:1; display:flex; flex-direction:column;">
+                        <label>Characters (Paste here)</label>
+                        <textarea v-model="editingCategory.chars" @change="savePaletteToStorage" class="config-textarea" style="flex:1; font-size:16px;"></textarea>
+                        <p class="desc">Spaces and line breaks will be ignored in the palette view.</p>
+                    </div>
+                </div>
+                <div style="flex:1; display:flex; align-items:center; justify-content:center; color:#999;" v-else>
+                    Select a category to edit
+                </div>
+            </div>
+        </div>
     </div>
 
     <div class="modal-backdrop" v-if="showDebugModal" @click.self="showDebugModal = false">
@@ -881,7 +1859,7 @@ const processSourceImage = () => {
             <div class="settings-pane">
                 <div class="settings-title"><span>⚙️ Configuration</span><button class="close-btn" @click="showConfigModal = false">✕</button></div>
                 <div class="config-section">
-                    <h3>Allowed Characters</h3>
+                    <h3>Allowed Characters (AI Generation)</h3>
                     <p class="desc">Click to toggle characters used for generation.</p>
                     <div class="char-select-grid">
                         <button 
@@ -897,7 +1875,20 @@ const processSourceImage = () => {
                     <textarea v-model="config.allowedChars" @change="onConfigUpdate" class="config-textarea"></textarea>
                     <h3>Advanced Settings</h3>
                     <label class="check-row"><input type="checkbox" v-model="config.useThinSpace" @change="onConfigUpdate"><span>Use Thin Space (&amp;thinsp;)</span></label>
-                    <label class="check-row"><input type="checkbox" v-model="config.safeMode" @change="onConfigUpdate"><span>Safe Mode (BBS Compatibility)</span></label>
+                    <label class="check-row"><input type="checkbox" v-model="config.safeMode" @change="onConfigUpdate; updateSyntaxHighlight()"><span>Safe Mode (BBS Compatibility)</span></label>
+                    <h3>Generation Logic</h3>
+                    <div class="control-row" style="justify-content:flex-start; gap:20px;">
+                        <label class="radio-label">
+                            <input type="radio" v-model="config.generationMode" value="hybrid">
+                            <span>Hybrid (Recommended)</span>
+                            <div class="sub-text">Pre-calc + Sync. Fast & Accurate.</div>
+                        </label>
+                        <label class="radio-label">
+                            <input type="radio" v-model="config.generationMode" value="accurate">
+                            <span>Dry Run (Full)</span>
+                            <div class="sub-text">Measure every char. Slowest but perfect.</div>
+                        </label>
+                    </div>
                     <h3>Font Setting</h3>
                     <div class="control-row"><span class="control-label">Current: {{ customFontName }}</span><label class="studio-btn outline small">Change (.ttf)<input type="file" @change="onFontFileChange" accept=".ttf,.otf" hidden></label></div>
                 </div>
@@ -905,14 +1896,33 @@ const processSourceImage = () => {
         </div>
     </div>
     
+    <div class="modal-backdrop" v-if="showExportModal" @click.self="showExportModal=false"><div class="modal-window"><div class="preview-pane"><div class="aa-export-preview" :style="{color:aaTextColor}">{{aaOutput}}</div></div><div class="settings-pane"><div class="settings-title"><span>Export</span><button @click="showExportModal=false">✕</button></div>
+    <button class="big-btn" style="margin-bottom:10px;">Download PNG</button>
+    <button class="big-btn" @click="generateTimelapse" :disabled="isExportingVideo" style="background:#555;">{{ isExportingVideo ? 'Generating...' : '🎬 Download Timelapse' }}</button>
+    </div></div></div>
+    
     <footer class="app-footer">
         <div class="footer-compact-row">
-            <button class="footer-icon-btn" @click="viewMode = viewMode==='single'?'split':'single'" title="Toggle Layout">{{ viewMode==='single' ? '⬜ Single' : '日 Split' }}</button>
+            <div style="position:relative;">
+                <button class="footer-icon-btn" @click="showLayoutMenu = !showLayoutMenu" title="Layout Settings">
+                    {{ viewMode === 'single' ? '⬜ Single' : (splitDirection === 'horizontal' ? '日 Split(H)' : '|| Split(V)') }}
+                </button>
+                <div class="file-menu-popover bottom-up" v-if="showLayoutMenu" style="left:0; right:auto;">
+                    <button class="menu-item" @click="toggleLayout('single')">⬜ Single View</button>
+                    <button class="menu-item" @click="toggleLayout('split-h')">日 Split Horizontal</button>
+                    <button class="menu-item" @click="toggleLayout('split-v')">|| Split Vertical</button>
+                    <div class="menu-sep"></div>
+                    <button class="menu-item" @click="isLayoutSwapped = !isLayoutSwapped">⇄ Swap Panes</button>
+                    <div class="menu-sep"></div>
+                    <button class="menu-item" @click="isBoxSelecting = !isBoxSelecting; showBoxOverlay = false;">{{ isBoxSelecting ? 'Exit Box Mode' : 'Enter Box Mode' }}</button>
+                </div>
+            </div>
+
             <button class="footer-icon-btn" @click="showBackgroundImage = !showBackgroundImage" :style="{ opacity: showBackgroundImage?1:0.5 }" title="Toggle Image">🖼️</button>
             <div class="footer-sep"></div>
             <button class="footer-icon-btn" @click="currentAAIndex = Math.max(0, currentAAIndex - 1)">←</button>
-            <div class="page-indicator" @click="showGridOverlay = !showGridOverlay"><span>{{ currentAAIndex + 1 }} / {{ projectAAs.length }}</span><span style="font-size:0.7rem; opacity:0.5; margin-left:4px;">▼</span></div>
-            <button class="footer-icon-btn" @click="currentAAIndex = Math.min(projectAAs.length - 1, currentAAIndex + 1)">→</button>
+            <div class="page-indicator" @click="showGridOverlay = !showGridOverlay"><span>{{ currentAAIndex + 1 }} / {{ projectAAs?.length || 0 }}</span><span style="font-size:0.7rem; opacity:0.5; margin-left:4px;">▼</span></div>
+            <button class="footer-icon-btn" @click="currentAAIndex = Math.min((projectAAs?.length||1) - 1, currentAAIndex + 1)">→</button>
             <div class="footer-sep"></div>
             <div style="position:relative;">
                 <button class="footer-text-btn" @click="showLoadMenu = !showLoadMenu">📂 Open</button>
@@ -935,11 +1945,44 @@ const processSourceImage = () => {
                     <button class="menu-item" @click="onSaveFile('MLT', 'UTF8')">UTF-8</button>
                 </div>
             </div>
+
+            <div style="position:relative;">
+                <button class="footer-text-btn" @click="showEditMenu = !showEditMenu">🛠️ Edit</button>
+                <div class="file-menu-popover bottom-up" v-if="showEditMenu">
+                    <div class="menu-label">Formatting</div>
+                    <button class="menu-item" @click="applyTextEdit('add-end-space')">Add End Space</button>
+                    <button class="menu-item" @click="applyTextEdit('trim-end')">Trim End Space</button>
+                    <div class="menu-sep"></div>
+                    <button class="menu-item" @click="applyTextEdit('add-start-space')">Add Start Space</button>
+                    <button class="menu-item" @click="applyTextEdit('trim-start')">Trim Start Space</button>
+                    <div class="menu-sep"></div>
+                    <button class="menu-item" @click="applyTextEdit('remove-empty')">Remove Empty Lines</button>
+                    <button class="menu-item" @click="applyTextEdit('del-last-char')">Del Last Char</button>
+                    <div class="menu-sep"></div>
+                    <button class="menu-item" @click="applyTextEdit('align-right')">Align Right with |</button>
+                    <div class="menu-sep"></div>
+                    <button class="menu-item" @click="pasteBoxSelection">Rect Paste (Overwrite)</button>
+                </div>
+            </div>
+
+            <div style="position:relative;">
+                <button class="footer-text-btn" @click="showCopyMenu = !showCopyMenu">📋 Copy</button>
+                <div class="file-menu-popover bottom-up" v-if="showCopyMenu">
+                    <div class="menu-label">Copy to Clipboard</div>
+                    <button class="menu-item" @click="triggerCopy('normal')">📄 Normal Text</button>
+                    <button class="menu-item" @click="triggerCopy('bbs')">🛡️ BBS Safe (SJIS)</button>
+                </div>
+            </div>
+
             <button class="footer-text-btn" @click="showExportModal=true">📤 Image</button>
             <input id="fileInput" type="file" hidden @change="onFileSelected" accept=".txt,.mlt,.ast">
         </div>
-        <div class="footer-status"><span>Ln {{ cursorInfo.row }}, Col {{ cursorInfo.col }} ({{ cursorInfo.px }}px)</span><span style="margin-left:10px; opacity:0.6;">{{ cursorInfo.charCount }} chars</span></div>
+        <div class="footer-status"><span>Ln {{ cursorInfo?.row || 1 }}, Col {{ cursorInfo?.col || 1 }} ({{ cursorInfo?.px || 0 }}px)</span><span style="margin-left:10px; opacity:0.6;">{{ cursorInfo?.charCount || 0 }} chars</span></div>
     </footer>
+
+    <div class="toast-notification" :class="{ active: showToast }">
+        {{ toastMessage }}
+    </div>
 
     <div ref="mirrorRef" class="aa-mirror"></div>
     <div class="grid-overlay" :class="{ active: showGridOverlay }" @click.self="showGridOverlay = false">
@@ -948,11 +1991,15 @@ const processSourceImage = () => {
         </div>
         <div class="thumb-card add-card" @click="addNewAA"><span style="font-size:2rem; color:#ccc;">+</span></div>
     </div>
-    <div class="modal-backdrop" v-if="showExportModal" @click.self="showExportModal=false"><div class="modal-window"><div class="preview-pane"><div class="aa-export-preview" :style="{color:aaTextColor}">{{aaOutput}}</div></div><div class="settings-pane"><div class="settings-title"><span>Export</span><button @click="showExportModal=false">✕</button></div><button class="big-btn">Download PNG</button></div></div></div>
   </div>
 </template>
 
 <style>
+@font-face {
+    font-family: 'MSP_Parallel';
+    src: local('MS PGothic'), local('MS Pゴシック');
+    unicode-range: U+2225;
+}
 @font-face { font-family: 'Saitamaar'; src: url('/Saitamaar.ttf') format('truetype'); font-display: swap; }
 :root { --bg-app: #Fdfbf7; --bg-panel: #ffffff; --text-main: #5c554f; --text-sub: #948c85; --accent-primary: #e6b086; --border-soft: 1px solid rgba(92, 85, 79, 0.1); --font-ui: "Hiragino Maru Gothic Pro", "Rounded Mplus 1c", sans-serif; }
 * { box-sizing: border-box; } 
@@ -971,7 +2018,13 @@ button { border:none; background:transparent; cursor:pointer; font-family:inheri
 .workspace { flex: 1; min-height: 0; padding: 0; display: grid; grid-template-columns: 1fr 260px; gap: 0; overflow: hidden; }
 .editor-stack { display: flex; flex-direction: column; height: 100%; min-width: 0; border-right: var(--border-soft); overflow: hidden; }
 .editor-card { background: #fff; display: flex; flex-direction: column; overflow: hidden; border-bottom: var(--border-soft); }
-.sidebar { display: flex; flex-direction: column; background: #fdfdfd; }
+.sidebar { 
+    display: flex; 
+    flex-direction: column; 
+    background: #fdfdfd; 
+    overflow: hidden; 
+    height: 100%;
+}
 .sidebar-tabs { display: flex; border-bottom: 1px solid #ddd; }
 .sidebar-tabs button { flex: 1; padding: 10px; font-weight: bold; font-size: 0.85rem; color: #888; border-bottom: 2px solid transparent; }
 .sidebar-tabs button.active { color: var(--accent-primary); border-bottom-color: var(--accent-primary); background: #fff; }
@@ -987,15 +2040,44 @@ button { border:none; background:transparent; cursor:pointer; font-family:inheri
 .aa-canvas-wrapper { flex: 1; position: relative; overflow: auto; background: #fff; padding: 0; }
 .canvas-scroll-area { position: relative; min-width: 100%; min-height: 100%; }
 .aa-textarea { position: absolute; top:0; left:0; width: 100%; height: 100%; padding: 0 0 0 16px; border: none; resize: none; outline: none; background: transparent; font-family: var(--font-aa), 'MS PGothic', 'Mona', monospace; font-size: 16px; line-height: 16px; color: var(--aa-text-color); white-space: pre; overflow: hidden; z-index: 2; font-feature-settings: "palt" 0, "kern" 0; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: geometricPrecision; }
+/* Highlight Layer */
+.aa-highlight-layer {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    padding: 0 0 0 16px;
+    font-family: var(--font-aa), 'MS PGothic', 'Mona', monospace;
+    font-size: 16px;
+    line-height: 16px;
+    white-space: pre;
+    color: transparent;
+    pointer-events: none;
+    z-index: 1;
+}
+.err-lead { background-color: rgba(255, 0, 0, 0.2); }
+.err-seq { background-color: rgba(255, 200, 0, 0.3); }
+.anchor-highlight { background-color: rgba(0, 100, 255, 0.15); }
+/* Box Selection Overlay */
+.box-selection-overlay {
+    position: absolute;
+    background-color: rgba(0, 100, 255, 0.2);
+    border: 1px solid rgba(0, 100, 255, 0.5);
+    pointer-events: none;
+    z-index: 5;
+}
+
 .canvas-layers { position: absolute; top:0; left:0; z-index: 0; pointer-events: none; } 
 .layer-base { position: absolute; top:0; left:0; } .layer-mask { position: absolute; top:0; left:0; }
 .card-header { flex: 0 0 28px; padding: 0 10px; background: #f9f9f9; font-size: 0.7rem; font-weight: bold; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 .resize-handle { flex: 0 0 8px; display: flex; align-items: center; justify-content: center; cursor: row-resize; background: #f9f9f9; border-top:1px solid #ddd; border-bottom:1px solid #ddd; z-index:10; }
+.resize-handle.handle-v { flex: 0 0 8px; cursor: col-resize; border-top: none; border-bottom: none; border-left: 1px solid #ddd; border-right: 1px solid #ddd; flex-direction: column; }
+.resize-handle.handle-v .handle-bar { width: 3px; height: 30px; }
+
 .handle-bar { width: 30px; height: 3px; background: #ccc; border-radius: 2px; }
 .collapse-btn { width: 100%; height: 100%; background: transparent; border: none; font-size: 0.6rem; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; letter-spacing: 1px; }
 .floating-toolbar { position: absolute; bottom: 15px; right: 15px; background: #fff; padding: 4px 8px; border-radius: 20px; border: 1px solid #ddd; display: flex; gap: 5px; z-index: 20; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
 .tool-btn { width: 28px; height: 28px; border-radius: 50%; font-size: 1rem; display: flex; align-items: center; justify-content: center; } .tool-btn.active { background: #eee; border: 1px solid #ccc; }
-.panel-box { display: flex; flex-direction: column; overflow: hidden; height: 100%; } .panel-header { padding: 8px; background: #f5f5f5; font-size: 0.75rem; font-weight: bold; }
+.panel-box { display: flex; flex-direction: column; overflow: hidden; height: 100%; } .panel-header { padding: 8px; background: #f5f5f5; font-size: 0.75rem; font-weight: bold; display:flex; justify-content:space-between; align-items:center; }
 .grid-area { flex: 1; padding: 5px; overflow-y: auto; } .char-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 2px; }
 .key { height: 32px; display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid #eee; cursor: pointer; } .key:hover { background: #f9f9f9; color: var(--accent-primary); border-color: var(--accent-primary); }
 .studio-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #e6e6e6; z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
@@ -1043,31 +2125,143 @@ button { border:none; background:transparent; cursor:pointer; font-family:inheri
 .control-row { display:flex; justify-content: space-between; align-items: center; margin-bottom:10px; }
 .control-label { font-size:0.8rem; color:#555; }
 .char-input { width: 100%; border: 1px solid #ccc; border-radius: 4px; text-align: center; padding: 2px; font-weight: bold; }
-.char-select-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fill, minmax(28px, 1fr));
-    gap: 4px;
-    margin-bottom: 10px;
-    max-height: 200px;
-    overflow-y: auto;
-    border: 1px solid #eee;
-    padding: 5px;
-    background: #fafafa;
+.char-select-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 4px; margin-bottom: 10px; max-height: 200px; overflow-y: auto; border: 1px solid #eee; padding: 5px; background: #fafafa; }
+.char-select-btn { width: 28px; height: 28px; display: flex; align-items: center; justify-content: center; border: 1px solid #ddd; background: #fff; border-radius: 4px; font-size: 14px; cursor: pointer; color: #ccc; transition: 0.1s; }
+.char-select-btn:hover { background: #f0f0f0; border-color: #bbb; }
+.char-select-btn.active { background: var(--accent-primary); color: #fff; border-color: var(--accent-primary); font-weight: bold; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+.color-control-group { display: flex; align-items: center; gap: 8px; margin-left: 10px; position: relative; }
+.dual-swatch-container { width: 32px; height: 32px; position: relative; cursor: pointer; }
+.swatch-back { position: absolute; width: 20px; height: 20px; bottom: 2px; right: 2px; border: 1px solid rgba(0,0,0,0.2); box-shadow: 1px 1px 3px rgba(0,0,0,0.1); background: white; z-index: 1; }
+.swatch-front { position: absolute; width: 20px; height: 20px; top: 2px; left: 2px; border: 1px solid rgba(0,0,0,0.2); box-shadow: 1px 1px 3px rgba(0,0,0,0.1); background: #222; z-index: 2; padding: 0; }
+.swatch-front:hover { transform: scale(1.05); }
+.color-picker-popover { position: absolute; top: 100%; right: 0; margin-top: 10px; background: white; border: 1px solid #ddd; border-radius: 8px; padding: 10px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); z-index: 100; width: 200px; }
+.color-grid { display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px; margin-bottom: 10px; }
+.color-swatch { width: 28px; height: 28px; border-radius: 4px; border: 1px solid rgba(0,0,0,0.1); cursor: pointer; transition: transform 0.1s; }
+.color-swatch:hover { transform: scale(1.1); box-shadow: 0 2px 5px rgba(0,0,0,0.2); }
+.color-slider-row { display: flex; flex-direction: column; gap: 5px; border-top: 1px solid #eee; padding-top: 10px; }
+.hue-slider { -webkit-appearance: none; width: 100%; height: 12px; border-radius: 6px; background: linear-gradient(to right, #f00 0%, #ff0 17%, #0f0 33%, #0ff 50%, #00f 67%, #f0f 83%, #f00 100%); outline: none; border: 1px solid rgba(0,0,0,0.1); }
+.hue-slider::-webkit-slider-thumb { -webkit-appearance: none; width: 16px; height: 16px; border-radius: 50%; background: #fff; border: 2px solid #ccc; cursor: pointer; box-shadow: 0 1px 3px rgba(0,0,0,0.3); }
+.color-custom-row { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; font-size: 0.8rem; color: #555; }
+.icon-btn.tiny { font-size: 0.8rem; padding: 2px; color:#888; }
+.icon-btn.tiny:hover { color:#333; background:none; }
+
+/* Palette Editor Styles */
+.palette-container { 
+    display: flex; 
+    flex-direction: column; 
+    height: 100%; 
+    gap: 0; 
+    overflow: hidden; /* ★追加 */
 }
-.char-select-btn {
-    width: 28px;
-    height: 28px;
+.history-section { min-height: 0; display: flex; flex-direction: column; } /* flex basis sets height */
+.library-section { min-height: 0; display: flex; flex-direction: column; }
+.project-list-section { flex: 0 0 180px; display: flex; flex-direction: column; overflow: hidden; }
+.history-bg { background-color: #fffbf5; }
+.header-title { font-size: 0.75rem; font-weight: bold; display: flex; align-items: center; gap: 6px; }
+.header-badge { background: var(--accent-primary); color: #fff; font-size: 0.65rem; padding: 1px 5px; border-radius: 8px; }
+.category-selector { width: 100%; padding: 4px; border: 1px solid #ddd; border-radius: 4px; font-size: 0.8rem; font-weight: bold; color: #555; }
+.char-grid-dense { display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 3px; }
+.key-dense { height: 28px; display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid transparent; border-radius: 4px; font-size: 13px; cursor: pointer; color: #333; transition: 0.1s; font-family: var(--font-aa); }
+.key-dense:hover { border-color: var(--accent-primary); color: var(--accent-primary); transform: scale(1.2); box-shadow: 0 2px 5px rgba(0,0,0,0.1); z-index: 2; background: #fff; }
+.grid-scroll-area { flex: 1; padding: 8px; overflow-y: auto; }
+.grid-scroll-area::-webkit-scrollbar { width: 5px; }
+.grid-scroll-area::-webkit-scrollbar-thumb { background: #ccc; border-radius: 3px; }
+.grid-scroll-area::-webkit-scrollbar-thumb:hover { background: #aaa; }
+/* Palette Editor List */
+.palette-list-item { padding: 8px 10px; border-bottom: 1px solid #eee; cursor: pointer; display: flex; justify-content: space-between; align-items: center; font-size: 0.85rem; }
+.palette-list-item:hover { background: #f0f0f0; }
+.palette-list-item.active { background: var(--accent-primary); color: #fff; font-weight: bold; }
+.cat-actions { display: flex; gap: 4px; }
+.cat-actions button { background: rgba(255,255,255,0.2); border: none; border-radius: 3px; color: #fff; cursor: pointer; padding: 2px 6px; font-size: 0.7rem; }
+.cat-actions button:hover { background: rgba(255,255,255,0.4); }
+.cat-actions button.del:hover { background: red; }
+
+.palette-resize-handle {
+    flex: 0 0 6px;
+    background: #f5f5f5;
+    border-top: 1px solid #ddd;
+    border-bottom: 1px solid #ddd;
     display: flex;
     align-items: center;
     justify-content: center;
-    border: 1px solid #ddd;
-    background: #fff;
-    border-radius: 4px;
-    font-size: 14px;
-    cursor: pointer;
-    color: #ccc;
-    transition: 0.1s;
+    cursor: row-resize;
+    z-index: 10;
 }
-.char-select-btn:hover { background: #f0f0f0; border-color: #bbb; }
-.char-select-btn.active { background: var(--accent-primary); color: #fff; border-color: var(--accent-primary); font-weight: bold; box-shadow: 0 1px 3px rgba(0,0,0,0.2); }
+.palette-resize-handle:hover, .palette-resize-handle.active {
+    background: #e0e0e0;
+}
+.palette-resize-handle .handle-bar {
+    width: 20px;
+    height: 3px;
+    background: #ccc;
+    border-radius: 2px;
+}
+
+/* Remote Caret (Ghost) */
+.remote-caret {
+    position: absolute;
+    width: 2px;
+    height: 16px;
+    background: rgba(230, 176, 134, 0.8); /* Accent Color */
+    z-index: 20;
+    pointer-events: none;
+    transition: top 0.05s, left 0.05s;
+    box-shadow: 0 0 4px rgba(230, 176, 134, 0.5);
+}
+
+/* Toast Notification */
+.toast-notification {
+    position: fixed;
+    bottom: 50px;
+    left: 50%;
+    transform: translateX(-50%) translateY(20px);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 8px 16px;
+    border-radius: 4px;
+    font-size: 0.85rem;
+    font-weight: bold;
+    opacity: 0;
+    pointer-events: none;
+    transition: 0.3s cubic-bezier(0.18, 0.89, 0.32, 1.28);
+    z-index: 1000;
+}
+.toast-notification.active {
+    opacity: 1;
+    transform: translateX(-50%) translateY(0);
+}
+/* ★修正: Box Mode 中は標準の選択色を透明にする (詳細度を上げるため .aa-textarea を付与) */
+textarea.aa-textarea.box-mode-active {
+    caret-color: transparent !important;
+}
+
+textarea.aa-textarea.box-mode-active::selection {
+    background-color: transparent !important;
+    color: inherit !important;
+}
+
+/* ★追加: 新しい矩形選択スタイル */
+.box-overlay-container {
+    position: absolute;
+    top: 0; left: 0;
+    width: 100%; height: 100%;
+    pointer-events: none;
+    z-index: 5;
+}
+
+.box-selection-line {
+    position: absolute;
+    background-color: rgba(0, 100, 255, 0.2);
+    /* border: 1px solid rgba(0, 100, 255, 0.3); ボーダーがあると重なって濃くなるので好みで */
+}
+
+.radio-label {
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+    padding: 5px;
+}
+.radio-label input { margin-bottom: 4px; }
+.radio-label span { font-weight: bold; font-size: 0.9rem; }
+.radio-label .sub-text { font-size: 0.7rem; color: #888; font-weight: normal; }
 </style>

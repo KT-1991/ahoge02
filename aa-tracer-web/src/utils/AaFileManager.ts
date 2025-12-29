@@ -120,12 +120,47 @@ export class AaFileManager {
     URL.revokeObjectURL(url);
   }
 
+// ★拡張: 数値実体参照デコーダー
+  // &#9999; (10進数) や &#x270F; (16進数) を文字に戻します
   static decodeEntities(text: string): string {
     if (!text.includes('&')) return text;
-    return text.replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec))
-               .replace(/&#x([0-9a-f]+);/yi, (_, hex) => String.fromCharCode(parseInt(hex, 16)))
+    return text.replace(/&#(\d+);/g, (_, dec) => String.fromCharCode(dec)) // 10進数
+               .replace(/&#x([0-9a-fA-F]+);/g, (_, hex) => String.fromCharCode(parseInt(hex, 16))) // 16進数
                .replace(/&amp;/g, '&')
                .replace(/&lt;/g, '<')
-               .replace(/&gt;/g, '>');
+               .replace(/&gt;/g, '>')
+               .replace(/&quot;/g, '"')
+               .replace(/&apos;/g, "'");
   }
+  // ★今回追加: Shift-JIS安全化エンコード処理
+  static encodeToBbsSafe(text: string): string {
+    return text.split('').map(char => {
+        const code = char.charCodeAt(0);
+        // ASCII範囲はそのまま
+        if (code <= 0x7E) return char;
+
+        // Shift_JISに変換して戻してみる（ラウンドトリップテスト）
+        // 変換できない文字は '?' になったり、異なるバイト列になる
+        const sjisBytes = Encoding.convert([code], {
+            to: 'SJIS',
+            from: 'UNICODE'
+        });
+        
+        // SJISバイト列を再度Unicodeに戻す
+        const roundTrip = Encoding.codeToString(Encoding.convert(sjisBytes, {
+            to: 'UNICODE',
+            from: 'SJIS'
+        }));
+
+        // 元の文字と違う、または「?」になってしまった場合（元の文字が?でない限り）
+        // それはShift-JISで表現できない文字なので、数値参照に変換する
+        if (char !== '?' && roundTrip === '?') {
+            return `&#${code};`;
+        }
+        
+        return char;
+    }).join('');
+  }
+
+
 }
