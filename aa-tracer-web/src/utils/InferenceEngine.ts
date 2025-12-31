@@ -7,6 +7,7 @@ export interface CharInfo {
   char: string;
   width: number;
   vector: Float32Array | null;
+  pixelCount: number;
 }
 
 export const DEFAULT_CHARS = (() => {
@@ -15,13 +16,13 @@ export const DEFAULT_CHARS = (() => {
     for (let i = 0xFF61; i < 0xFFA0; i++) chars += String.fromCharCode(i);
     chars += "\u3000";
     chars += "─│┌┐└┘├┤┬┴┼━┃┏┓┛┗┣┳┫┻╋";
-    chars += "｡､･ﾟヽヾゝゞ";
-    chars += "／＼⊂⊃∪∩∀´｀・…ω";
+    chars += "｡､･ﾟヽヾゝゞ／＼⊂⊃∪∩∀´｀・…ω";
     return chars;
 })();
 
 export class InferenceEngine {
   session: ort.InferenceSession | null = null;
+  encoderSession: ort.InferenceSession | null = null;
   charDb: CharInfo[] = [];
   mode: 'vector' | 'classifier' = 'vector';
   usageHistory: Map<string, number> = new Map();
@@ -29,25 +30,17 @@ export class InferenceEngine {
   private fullClassList: string[] = [];
   private activeClassMask: boolean[] = [];
   private allowedCharSet: Set<string> = new Set();
-
-  // ★追加: 文字幅キャッシュ
   private charWidthCache: Map<string, number> = new Map();
   private currentFontName: string = '';
+  private centerMask: Float32Array | null = null;
 
   fontName = 'Saitamaar';
   currentModelUrl: string | null = null;
 
   async init(
-      modelUrl: string, 
-      fontUrl: string, 
-      jsonUrl: string, 
-      mode: 'vector' | 'classifier' = 'vector',
-      fontName: string = 'Saitamaar'
+      modelUrl: string, encoderUrl: string, fontUrl: string, jsonUrl: string, 
+      mode: 'vector' | 'classifier' = 'vector', fontName: string = 'Saitamaar'
   ) {
-    const onnxPath = BASE_URL === '/' ? '/onnx/' : `${BASE_URL}onnx/`;
-    ort.env.wasm.wasmPaths = onnxPath;
-    ort.env.wasm.numThreads = 1;
-
     const fixPath = (path: string) => {
         if (path.startsWith('http')) return path;
         const cleanPath = path.startsWith('/') ? path.slice(1) : path;
@@ -55,106 +48,126 @@ export class InferenceEngine {
         return `${BASE_URL}${cleanPath}`;
     };
 
+    const onnxPath = BASE_URL === '/' ? '/onnx/' : `${BASE_URL}onnx/`;
+    ort.env.wasm.wasmPaths = onnxPath;
+    ort.env.wasm.numThreads = 1;
+
+    this.createCenterMask();
+
     try {
         const response = await fetch(fixPath(jsonUrl));
         if (response.ok) {
             const charList: string[] = await response.json();
             this.fullClassList = charList.map(c => (c === '<UNK>' || c === '<BOS>') ? ' ' : c);
         } else {
-            console.warn(`JSON load failed, using default.`);
             this.fullClassList = DEFAULT_CHARS.split('');
         }
     } catch (e) {
-        console.error("Failed to load char list json", e);
+        console.error(e);
         this.fullClassList = DEFAULT_CHARS.split('');
     }
 
     await this.loadModel(fixPath(modelUrl), mode);
+    try {
+        if (!this.encoderSession) {
+            this.encoderSession = await ort.InferenceSession.create(fixPath(encoderUrl), { executionProviders: ['wasm'] });
+        }
+    } catch (e) { console.warn(e); }
 
     const charString = this.fullClassList.join('');
-    await this.updateDatabase(fixPath(fontUrl), charString, fontName);
+    await this.updateDatabase(fontUrl ? fixPath(fontUrl) : null, charString, fontName);
+  }
+
+  private createCenterMask() {
+      const size = 32;
+      this.centerMask = new Float32Array(size * size);
+      const sigma = 0.25;
+      const center = (size - 1) / 2.0;
+      let maxVal = 0; let minVal = 1.0;
+      for(let y=0; y<size; y++) {
+          for(let x=0; x<size; x++) {
+              const ny = (y - center) / center;
+              const nx = (x - center) / center;
+              const d = Math.sqrt(nx*nx + ny*ny);
+              const val = Math.exp( - (d * d) / (2.0 * sigma * sigma) );
+              this.centerMask[y*size + x] = val;
+              if (val > maxVal) maxVal = val;
+              if (val < minVal) minVal = val;
+          }
+      }
+      for(let i=0; i<this.centerMask.length; i++) {
+          this.centerMask[i] = (this.centerMask[i]! - minVal) / (maxVal - minVal);
+      }
   }
 
   async loadModel(modelUrl: string, mode: 'vector' | 'classifier') {
       if (this.currentModelUrl === modelUrl && this.session) {
-          this.mode = mode; 
-          return; 
+          this.mode = mode; return; 
       }
       this.mode = mode;
-      console.log(`Loading Model: ${modelUrl} (Mode: ${mode})`);
-      
       try {
-          this.session = await ort.InferenceSession.create(modelUrl, {
-              executionProviders: ['wasm']
-          });
+          this.session = await ort.InferenceSession.create(modelUrl, { executionProviders: ['wasm'] });
           this.currentModelUrl = modelUrl;
-          console.log(`Model Loaded.`);
-      } catch (e) {
-          console.error(`Failed to load model: ${modelUrl}`, e);
-          throw e;
-      }
+      } catch (e) { throw e; }
+  }
+
+  public getSafeCharList(): string {
+      const chars: string[] = [];
+      for (let i = 32; i < 127; i++) chars.push(String.fromCharCode(i));
+      chars.push('\u3000');
+      for (let i = 0x3041; i < 0x3097; i++) chars.push(String.fromCharCode(i));
+      for (let i = 0x30A1; i < 0x30FB; i++) chars.push(String.fromCharCode(i));
+      for (let i = 0xFF61; i < 0xFFA0; i++) chars.push(String.fromCharCode(i));
+      for (let i = 0x2010; i < 0x2027; i++) chars.push(String.fromCharCode(i));
+      for (let i = 0x2500; i < 0x2580; i++) chars.push(String.fromCharCode(i));
+      for (let i = 0x2580; i < 0x25A0; i++) chars.push(String.fromCharCode(i));
+      for (let i = 0x25A0; i < 0x2600; i++) chars.push(String.fromCharCode(i));
+      return Array.from(new Set(chars)).join('');
   }
 
   updateAllowedChars(allowedChars: string) {
       this.allowedCharSet = new Set(allowedChars.split(''));
       if (this.fullClassList.length > 0) {
-          this.activeClassMask = this.fullClassList.map(c => 
-              this.allowedCharSet.has(c) && c !== '<UNK>' && c !== '<BOS>'
-          );
+          this.activeClassMask = this.fullClassList.map(c => this.allowedCharSet.has(c));
       }
-      // フォント名が決まっていればメトリクスも再計算
-      if (this.currentFontName) {
-          this.updateFontMetrics(this.currentFontName, allowedChars);
-      }
+      if (this.currentFontName) this.updateFontMetrics(this.currentFontName, allowedChars);
   }
 
-  // ★追加: 高精度な文字幅の事前計算
   updateFontMetrics(fontName: string, allowedChars: string) {
       this.currentFontName = fontName;
       this.charWidthCache.clear();
-
       const canvas = document.createElement('canvas');
       const ctx = canvas.getContext('2d')!;
       ctx.font = `16px "${fontName}"`; 
-
       const uniqueChars = Array.from(new Set(allowedChars.split('')));
       const sampleCount = 50; 
-
       uniqueChars.forEach(c => {
-          // 50個並べて平均を取ることで、サブピクセル精度とカーニングの平均値を得る
           const text = c.repeat(sampleCount);
           const width = ctx.measureText(text).width / sampleCount;
           this.charWidthCache.set(c, width);
       });
-      // スペースは必須
       if (!this.charWidthCache.has(' ')) {
           this.charWidthCache.set(' ', ctx.measureText(' '.repeat(50)).width / 50);
       }
-      console.log(`[InferenceEngine] Metrics updated for ${fontName}. Cache size: ${this.charWidthCache.size}`);
   }
 
-  async updateDatabase(fontUrl: string, charList: string, fontName: string) {
+  async updateDatabase(fontUrl: string | null, charList: string, fontName: string) {
     this.fontName = fontName;
     if (fontUrl && fontUrl.startsWith('blob:')) {
         const font = new FontFace(fontName, `url(${fontUrl})`);
         await font.load();
         document.fonts.add(font);
     }
-
     const uniqueChars = Array.from(new Set(charList.split('')));
-    
     if (this.allowedCharSet.size === 0) {
         this.updateAllowedChars(uniqueChars.join(''));
     }
-    // ここで一回計算しておく
     this.updateFontMetrics(fontName, this.getLoadedCharList());
 
     this.charDb = [];
     const canvas = document.createElement('canvas');
     canvas.width = 32; canvas.height = 32;
     const ctx = canvas.getContext('2d', { willReadFrequently: true })!;
-    
-    ctx.font = `16px "${this.fontName}"`; 
     ctx.textBaseline = 'top';
     ctx.fillStyle = 'black';
     
@@ -163,39 +176,437 @@ export class InferenceEngine {
     for (let i = 0; i < loopList.length; i++) {
         const char = loopList[i]!;
         const metrics = ctx.measureText(char);
-        const w = Math.max(4, Math.ceil(metrics.width)); // DB構築時は整数でOK
-        
+        const w = Math.max(4, Math.ceil(metrics.width)); 
         let vector: Float32Array | null = null;
 
-        if (this.mode === 'vector') {
-            ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 32, 32); ctx.fillStyle = 'black';
-            const x = (32 - w) / 2; 
-            const y = (32 - 16) / 2;
-            ctx.fillText(char, x, y);
+        ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 32, 32); 
+        ctx.fillStyle = 'black';
+        const x = (32 - w) / 2; const y = (32 - 16) / 2;
+        ctx.fillText(char, x, y);
 
-            const features = FeatureExtractor.generate9ChInput(canvas);
+        const imgData = ctx.getImageData(0, 0, 32, 32);
+        let inkAmount = 0;
+        for(let k=0; k<imgData.data.length; k+=4) {
+            if (imgData.data[k]! < 128) inkAmount++;
+        }
+
+        if (this.mode === 'vector') {
+            const src = (window as any).cv.imread(canvas);
+            const skeleton = FeatureExtractor.skeletonize(src);
+            const features = FeatureExtractor.generate9ChInputFromSkeleton(skeleton);
             const tensor = this.toTensor(features, 1, 32, 32, 9);
-            
             if (this.session) {
                 const res = await this.session.run({ input_image: tensor });
                 const keys = Object.keys(res);
-                if (keys.length > 0) {
-                    vector = res[keys[0]!]!.data as Float32Array;
-                }
+                if (keys.length > 0) vector = res[keys[0]!]!.data as Float32Array;
             }
+            src.delete(); skeleton.delete();
         }
-        this.charDb.push({ char: char, vector, width: w });
+        this.charDb.push({ char: char, vector, width: w, pixelCount: inkAmount });
     }
     console.log(`DB Rebuilt: ${this.charDb.length} chars.`);
   }
 
-  recordUsage(text: string) {
-      for (const char of text) {
-          const count = this.usageHistory.get(char) || 0;
-          this.usageHistory.set(char, Math.min(count + 1, 50));
+  // ★修正: 縦コンテキスト (prevBottomEdge) を受け取るように変更
+  private async rerankCandidates(
+      patch: Float32Array, 
+      candidates: any[], 
+      ctx: CanvasRenderingContext2D,
+      prevBottomEdge: Float32Array | null
+  ): Promise<any[]> {
+      const reranked = [];
+      const canvas = ctx.canvas;
+
+      const patchPixels = new Float32Array(32 * 32);
+      let inputInkSum = 0;
+      for (let i = 0; i < 32 * 32; i++) {
+          const val = patch[i * 9]; 
+          if (val! > 50) {
+              patchPixels[i] = 1.0;
+              inputInkSum += 1.0;
+          } else {
+              patchPixels[i] = 0.0;
+          }
       }
+
+      for (const cand of candidates) {
+          if (cand.char_id === -1) {
+              const spaceScore = (inputInkSum < 5) ? 1.0 : 0.0;
+              reranked.push({ ...cand, finalScore: spaceScore });
+              continue;
+          }
+
+          // 文字描画
+          ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 32, 32);
+          ctx.fillStyle = 'black';
+          const info = this.charDb.find(c => c.char === cand.char);
+          const w = info ? info.width : 10;
+          const x = (32 - w) / 2; const y = (32 - 16) / 2;
+          ctx.fillText(cand.char, x, y);
+
+          const src = (window as any).cv.imread(canvas);
+          const skeleton = FeatureExtractor.skeletonize(src);
+          (window as any).cv.bitwise_not(skeleton, skeleton);
+          const charData = skeleton.data; // Uint8Array 32x32
+
+          // --- 1. 入力画像とのマッチング (IoU) ---
+          let intersection = 0;
+          let union = 0;
+          let charInkSum = 0;
+          const margin = 8; 
+          for (let py = 0; py < 32; py++) {
+              for (let px = margin; px < 32 - margin; px++) {
+                  const i = py * 32 + px;
+                  const inVal = patchPixels[i];
+                  const chVal = (charData[i] > 100) ? 1.0 : 0.0;
+                  if (inVal! > 0 || chVal > 0) union += 1.0;
+                  if (inVal! > 0 && chVal > 0) intersection += 1.0;
+                  if (chVal > 0) charInkSum += 1.0;
+              }
+          }
+          let matchScore = 0.0;
+          if (union > 0) {
+              const coverRate = (inputInkSum > 0) ? (intersection / inputInkSum) : 0;
+              const precision = (charInkSum > 0) ? (intersection / charInkSum) : 0;
+              matchScore = (coverRate * 0.7) + (precision * 0.3);
+          }
+
+          // --- 2. 縦方向の接続チェック (Vertical Context) ---
+          let verticalConnectScore = 0.0;
+          if (prevBottomEdge) {
+              // 上の行のボトム(prevBottomEdge) と 今回のトップ(py=0~2付近) を比較
+              let connectHits = 0;
+              let connectTotal = 0;
+              
+              // 横方向の範囲 (x軸)
+              for (let px = 0; px < 32; px++) {
+                  // 前行の最下段付近 (既に0/1化されている前提)
+                  const upperVal = prevBottomEdge[px]!; 
+                  if (upperVal > 0) {
+                      connectTotal += 1;
+                      // 今の文字の最上段付近 (py=0,1,2) にインクがあるか？
+                      let hasInkBelow = false;
+                      for(let py=0; py<3; py++) {
+                          if (charData[py*32 + px] > 100) hasInkBelow = true;
+                          // 左右のブレも許容 (±1px)
+                          if (px>0 && charData[py*32 + px - 1] > 100) hasInkBelow = true;
+                          if (px<31 && charData[py*32 + px + 1] > 100) hasInkBelow = true;
+                      }
+                      if (hasInkBelow) connectHits += 1;
+                  }
+              }
+              // つながるべき箇所のうち、実際につながった割合
+              if (connectTotal > 0) {
+                  verticalConnectScore = (connectHits / connectTotal);
+              }
+          }
+
+          // スコア統合
+          // Vertical Context があれば強力に加点
+          const finalScore = (cand.score * 0.3) + (matchScore * 0.5) + (verticalConnectScore * 0.5);
+          
+          reranked.push({ ...cand, finalScore });
+          src.delete(); skeleton.delete();
+      }
+      reranked.sort((a, b) => b.finalScore - a.finalScore);
+      return reranked;
   }
 
+  // ★修正: 戻り値を { text, bottomEdge } に変更
+  // また引数に prevBottomEdge を追加
+  async solveLine(
+    lineFeatures: Float32Array, width: number,
+    blueChar: string, redChar: string, maskData: Uint8ClampedArray | null = null, 
+    _yOffset: number = 0, generationMode: 'hybrid' | 'accurate' = 'hybrid', 
+    measureCtx: CanvasRenderingContext2D | null = null,
+    prevBottomEdge: Float32Array | null = null // 追加
+  ): Promise<{ text: string, bottomEdge: Float32Array }> {
+    
+    // 現在行のBottom Edgeを構築するためのバッファ
+    // 幅は width (px) 分確保
+    const currentBottomEdge = new Float32Array(width);
+
+    // --- Classifier Mode ---
+    if (this.mode === 'classifier') {
+        const half = 16;
+        const beamWidth = 3; 
+        let beams = [{ x: 0.0, cost: 0, text: "", lastChar: "" }];
+        const searchCache = new Map<number, any[]>();
+        let step = 0;
+        const maxSteps = width * 2; 
+
+        while (beams.length > 0 && step < maxSteps) {
+            // (Classifierの探索ループは変更なし)
+            // ... (省略せずに記述しますが、長くなるため前回のClassifier部分と同じ) ...
+            const newBeams = [];
+            const finishedBeams = [];
+            for (const b of beams) {
+                if (b.x >= width - 4) { finishedBeams.push(b); continue; }
+                const centerX = Math.min(Math.max(b.x + half, half), width - half);
+                
+                let forcedChar = null;
+                if (maskData) {
+                    const y = 16; 
+                    const color = this.getColorAt(maskData, width, centerX, y); 
+                    if (color === 'blue') forcedChar = blueChar;
+                    if (color === 'red') forcedChar = redChar;
+                }
+                if (forcedChar) {
+                    const w = this.charWidthCache.get(forcedChar) || 8.0;
+                    let nextX = b.x + w;
+                    const nextText = b.text + forcedChar;
+                    if (generationMode === 'accurate' && measureCtx) {
+                        nextX = measureCtx.measureText(nextText).width;
+                    } else if (generationMode === 'hybrid' && measureCtx && nextText.length % 10 === 0) {
+                        nextX = measureCtx.measureText(nextText).width;
+                    }
+                    newBeams.push({ x: nextX, cost: b.cost, text: nextText, lastChar: forcedChar });
+                    continue; 
+                }
+
+                // Ink Gate
+                const patch = this.extractPatch(lineFeatures, width, centerX);
+                let sumSkeleton = 0; let sumDensity = 0;
+                for (let i = 0; i < 32*32; i++) {
+                    sumSkeleton += patch[i*9+0]!;
+                    sumDensity += patch[i*9+3]!;
+                }
+                const baseSignal = Math.max(sumSkeleton/(32*32), sumDensity/(32*32));
+                if (baseSignal < 15) { 
+                    const w = this.charWidthCache.get(' ') || 8.0;
+                    newBeams.push({ x: b.x + w, cost: b.cost, text: b.text + ' ', lastChar: ' ' });
+                    continue;
+                }
+
+                const cacheKey = Math.floor(b.x);
+                if (!searchCache.has(cacheKey)) {
+                    const tensor = this.toTensor(patch, 1, 32, 32, 9);
+                    const res = await this.session!.run({ input_image: tensor });
+                    const keys = Object.keys(res);
+                    const outputData = res[keys[0]!]!.data as Float32Array;
+                    const candidates = this.getMaskedTopKClasses(outputData, 10);
+                    searchCache.set(cacheKey, candidates);
+                }
+                const candidates = searchCache.get(cacheKey)!;
+
+                for (const cand of candidates) {
+                    let visualCost = (10.0 - cand.score); 
+                    if (visualCost < 0) visualCost = 0;
+                    const nextText = b.text + cand.char;
+                    let nextX = b.x;
+                    if (generationMode === 'accurate' && measureCtx) {
+                        nextX = measureCtx.measureText(nextText).width;
+                    } else {
+                        const w = this.charWidthCache.get(cand.char) || cand.width;
+                        nextX = b.x + w;
+                        if (generationMode === 'hybrid' && measureCtx && nextText.length % 10 === 0) {
+                            nextX = measureCtx.measureText(nextText).width;
+                        }
+                    }
+                    newBeams.push({ x: nextX, cost: b.cost + visualCost, text: nextText, lastChar: cand.char });
+                }
+            }
+            newBeams.sort((a, b) => a.cost - b.cost);
+            beams = newBeams.slice(0, beamWidth);
+            beams.push(...finishedBeams);
+            if (beams.length > 0 && beams.every(b => b.x >= width - 4)) break;
+            step++;
+        }
+        beams.sort((a, b) => a.cost - b.cost);
+        // ClassifierモードはBottomEdge計算を省略（または必要なら実装）
+        return { text: beams[0]?.text || "", bottomEdge: currentBottomEdge };
+    }
+
+    // --- Vector Mode ---
+    const half = 16;
+    const beamWidth = 3;
+    let beams = [{ x: 0.0, cost: 0, text: "", lastChar: "" }];
+    const searchCache = new Map<number, any[]>();
+    const tempCanvas = document.createElement('canvas');
+    tempCanvas.width = 32; tempCanvas.height = 32;
+    const tempCtx = tempCanvas.getContext('2d', { willReadFrequently: true })!;
+    tempCtx.font = `16px "${this.fontName}"`; 
+    tempCtx.textBaseline = 'top';
+
+    let step = 0;
+    const maxSteps = width * 2; 
+    let spaceWidth = 8.0;
+    if (this.charWidthCache.has(' ')) spaceWidth = this.charWidthCache.get(' ')!;
+
+    while (beams.length > 0 && step < maxSteps) {
+      const newBeams = [];
+      const finishedBeams = [];
+
+      for (const b of beams) {
+        if (b.x >= width - 4) { finishedBeams.push(b); continue; }
+        
+        const centerX = b.x + half; 
+        const xCenterInt = Math.round(centerX);
+        const xStart = xCenterInt - half;
+        const xEnd = xCenterInt + half;
+        if (xEnd > width) { finishedBeams.push(b); continue; }
+
+        // ハッチング反映
+        let forcedChar = null;
+        if (maskData) {
+            const y = 16; 
+            const color = this.getColorAt(maskData, width, xCenterInt, y); 
+            if (color === 'blue') forcedChar = blueChar;
+            if (color === 'red') forcedChar = redChar;
+        }
+        if (forcedChar) {
+            const w = this.charWidthCache.get(forcedChar) || 8.0;
+            newBeams.push({ x: b.x + w, cost: b.cost, text: b.text + forcedChar, lastChar: forcedChar });
+            continue; 
+        }
+
+        const patch = this.extractPatch(lineFeatures, width, xCenterInt);
+
+        // Ink Gate
+        let centerInk = 0;
+        const cy = 16; const cx = 16;
+        for(let dy=-6; dy<6; dy++) {
+            for(let dx=-6; dx<6; dx++) {
+                const idx = ((cy+dy)*32 + (cx+dx)) * 9;
+                centerInk += patch[idx]!; 
+            }
+        }
+        let totalDensity = 0;
+        for(let i=0; i<32*32; i++) totalDensity += patch[i*9+3]!;
+        totalDensity /= (32*32);
+
+        let candidates: any[] = [];
+        if (centerInk < 30) {
+            candidates = [{ char: ' ', score: 100.0, finalScore: 100.0, pixelCount: 0 }];
+        } else {
+            if (!searchCache.has(xCenterInt)) {
+                const tensor = this.toTensor(patch, 1, 32, 32, 9);
+                const res = await this.session!.run({ input_image: tensor });
+                const keys = Object.keys(res);
+                const outputData = res[keys[0]!]!.data as Float32Array;
+                const baseCands = this.searchVectorDb(outputData, 15);
+                
+                // ★修正: 前行のBottomEdge情報を渡してRerank
+                // 前行の該当箇所 (xStart ~ xEnd) を切り出す
+                let prevPatchBottom: Float32Array | null = null;
+                if (prevBottomEdge) {
+                    prevPatchBottom = new Float32Array(32);
+                    for(let px=0; px<32; px++) {
+                        const globalX = xStart + px;
+                        if(globalX >= 0 && globalX < width) {
+                            prevPatchBottom[px] = prevBottomEdge[globalX]!;
+                        }
+                    }
+                }
+
+                const reranked = await this.rerankCandidates(patch, baseCands, tempCtx, prevPatchBottom);
+                searchCache.set(xCenterInt, reranked);
+            }
+            candidates = searchCache.get(xCenterInt)!;
+        }
+
+        for (const cand of candidates) {
+            const scoreToUse = (cand.finalScore !== undefined) ? cand.finalScore : cand.score;
+            let visualCost = (1.0 - scoreToUse) * 10.0;
+            if (visualCost < 0) visualCost = 0;
+
+            const char = cand.char;
+            const charPixels = cand.pixelCount || 0;
+
+            if (char !== ' ') {
+                if (totalDensity < 40 && charPixels > 40) visualCost += 5.0;
+                else if (totalDensity > 80 && charPixels < 20) visualCost += 1.0;
+            }
+
+            let w = spaceWidth;
+            if (char !== ' ') {
+                w = this.charWidthCache.get(char) || 10.0;
+            }
+            if (w < 4.0) w = 4.0;
+
+            let transCost = 0;
+            if (char === b.lastChar && char !== ' ' && char !== '─') {
+                transCost = 0.5;
+            }
+            const nextX = b.x + w;
+
+            newBeams.push({
+                x: nextX,
+                cost: b.cost + visualCost + transCost,
+                text: b.text + char,
+                lastChar: char
+            });
+        }
+      }
+      newBeams.sort((a, b) => a.cost - b.cost);
+      beams = newBeams.slice(0, beamWidth);
+      beams.push(...finishedBeams);
+      if (beams.length > 0 && beams.every(b => b.x >= width - 4)) break;
+      step++;
+    }
+    beams.sort((a, b) => a.cost - b.cost);
+    
+    const bestText = beams[0]?.text || "";
+
+    // ★重要: 生成されたテキストから、次行のためのBottom Edgeを計算する
+    // (これは少し重い処理なので、Vectorモードのみで実施)
+    if (this.mode === 'vector') {
+        let currentX = 0.0;
+        const canvas = tempCtx.canvas;
+        tempCtx.fillStyle = 'black'; 
+        // 描画ループ
+        for (const char of bestText) {
+            const w = this.charWidthCache.get(char) || 10.0;
+            // 描画
+            tempCtx.fillStyle = 'white'; tempCtx.fillRect(0,0,32,32);
+            tempCtx.fillStyle = 'black';
+            // 位置合わせ (中央寄せでDB登録されているため、描画もそれに合わせる)
+            // ただしここでは「AAとしての描画」なので、左詰めが良いか？
+            // -> InferenceEngineのrerankは「中央寄せ文字」を使っている。
+            // -> ここでは正確な位置（x）に文字を置きたいが、Canvasは32x32しかない。
+            // -> 仕方ないので1文字ずつ描画し、BottomEdge配列の該当箇所を埋める。
+            
+            // 簡易的に：32x32の中央に描画し、そのBottom 3行分を取り出す
+            // それを currentBottomEdge[currentX ... currentX+w] に書き込む
+            const dbW = this.charDb.find(c=>c.char===char)?.width || w;
+            const drawX = (32 - dbW)/2;
+            const drawY = (32 - 16)/2;
+            tempCtx.fillText(char, drawX, drawY);
+            
+            const src = (window as any).cv.imread(canvas);
+            const skeleton = FeatureExtractor.skeletonize(src);
+            (window as any).cv.bitwise_not(skeleton, skeleton);
+            const charData = skeleton.data; // 32x32
+            
+            // 下端3行 (y=29,30,31) にインクがあるかチェック
+            // インクがあれば、その列(x)は「接続点」とする
+            for(let cx=0; cx<32; cx++) {
+                let hasInk = false;
+                for(let cy=29; cy<32; cy++) {
+                    if (charData[cy*32 + cx] > 100) hasInk = true;
+                }
+                if (hasInk) {
+                    // 全体のX座標: currentX + (cx - drawX) ?
+                    // いや、文字幅wの中にcxが収まる範囲でマッピングする
+                    // 文字の開始位置: Math.round(currentX)
+                    // 文字内の相対位置: cx - drawX (中央寄せのオフセットを引く)
+                    // ただし、drawXは余白なので、実体は drawX から始まる
+                    const globalX = Math.round(currentX) + (cx - Math.floor(drawX));
+                    if (globalX >= 0 && globalX < width) {
+                        currentBottomEdge[globalX] = 1.0;
+                    }
+                }
+            }
+            src.delete(); skeleton.delete();
+            currentX += w;
+        }
+    }
+
+    return { text: bestText, bottomEdge: currentBottomEdge };
+  }
+
+  // --- Helpers ---
+  // (以降は前回のまま変更なし)
   private getColorAt(maskData: Uint8ClampedArray, width: number, x: number, y: number) {
       const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
       if (idx < 0 || idx >= maskData.length) return null;
@@ -207,227 +618,11 @@ export class InferenceEngine {
       if (r > 100 && b < 100) return 'red';
       return null;
   }
-
-  /**
-   * 一括変換用: Hybrid / Accurate モード対応
-   */
-  async solveLine(
-    lineFeatures: Float32Array, 
-    width: number,
-    blueChar: string,
-    redChar: string, 
-    maskData: Uint8ClampedArray | null = null,
-    _yOffset: number = 0,
-    // ★追加: 生成モードとコンテキスト
-    generationMode: 'hybrid' | 'accurate' = 'hybrid',
-    ctx: CanvasRenderingContext2D | null = null
-  ): Promise<string> {
-    const half = 16;
-    const beamWidth = 3;
-    // xはfloatで保持する
-    let beams = [{ x: 0.0, cost: 0, text: "", lastChar: "" }];
-    const searchCache = new Map<number, any[]>();
-    
-    let step = 0;
-    const maxSteps = width * 2; 
-
-    while (beams.length > 0 && step < maxSteps) {
-      const newBeams = [];
-      const finishedBeams = [];
-
-      for (const b of beams) {
-        if (b.x >= width - 4) {
-          finishedBeams.push(b);
-          continue;
-        }
-
-        const centerX = Math.min(Math.max(b.x + half, half), width - half);
-        
-        // --- 強制文字判定 ---
-        let forcedChar = null;
-        if (maskData) {
-            const y = 16; 
-            const color = this.getColorAt(maskData, width, centerX, y); 
-            if (color === 'blue') forcedChar = blueChar;
-            if (color === 'red') forcedChar = redChar;
-        }
-
-        if (forcedChar) {
-            // 強制文字の場合はキャッシュから幅を取得
-            const w = this.charWidthCache.get(forcedChar) || 8.0;
-            const nextText = b.text + forcedChar;
-            
-            // ★位置更新ロジック (強制文字版)
-            let nextX = b.x + w;
-            if (generationMode === 'accurate' && ctx) {
-                nextX = ctx.measureText(nextText).width;
-            } else if (generationMode === 'hybrid' && ctx && nextText.length % 10 === 0) {
-                nextX = ctx.measureText(nextText).width;
-            }
-
-            newBeams.push({
-                x: nextX,
-                cost: b.cost,
-                text: nextText,
-                lastChar: forcedChar
-            });
-            continue; 
-        }
-
-        // --- AI推論 ---
-        // searchCacheのキーは整数に丸めてヒット率を上げる
-        const cacheKey = Math.floor(b.x);
-        if (!searchCache.has(cacheKey)) {
-            const patch = this.extractPatch(lineFeatures, width, centerX);
-            const tensor = this.toTensor(patch, 1, 32, 32, 9);
-            
-            const res = await this.session!.run({ input_image: tensor });
-            const keys = Object.keys(res);
-            const outputData = res[keys[0]!]!.data as Float32Array;
-            
-            let candidates: any[] = [];
-            if (this.mode === 'classifier') {
-                candidates = this.getMaskedTopKClasses(outputData, 10);
-            } else {
-                candidates = this.searchVectorDb(outputData, 10);
-            }
-            searchCache.set(cacheKey, candidates);
-        }
-
-        const candidates = searchCache.get(cacheKey)!;
-
-        for (const cand of candidates) {
-           let visualCost = 0;
-           if (this.mode === 'classifier') {
-               visualCost = (10.0 - cand.score); 
-           } else {
-               visualCost = (1.0 - cand.score) * 10.0;
-           }
-           if (visualCost < 0) visualCost = 0;
-
-           const nextText = b.text + cand.char;
-           
-           // ★位置更新ロジック (AI推論版)
-           let nextX = b.x;
-           
-           if (generationMode === 'accurate' && ctx) {
-               // 毎回実測
-               nextX = ctx.measureText(nextText).width;
-           } else {
-               // Hybrid or Normal
-               // キャッシュされた高精度幅を使う
-               const w = this.charWidthCache.get(cand.char) || cand.width;
-               nextX = b.x + w;
-
-               // Hybridかつ10文字ごとなら補正
-               if (generationMode === 'hybrid' && ctx && nextText.length % 10 === 0) {
-                   nextX = ctx.measureText(nextText).width;
-               }
-           }
-
-           newBeams.push({
-             x: nextX,
-             cost: b.cost + visualCost,
-             text: nextText,
-             lastChar: cand.char
-           });
-        }
-      }
-
-      newBeams.sort((a, b) => a.cost - b.cost);
-      beams = newBeams.slice(0, beamWidth);
-      beams.push(...finishedBeams);
-      
-      // 全ビームが終了条件を満たしたら終了
-      if (beams.length > 0 && beams.every(b => b.x >= width - 4)) break;
-      step++;
-    }
-
-    beams.sort((a, b) => a.cost - b.cost);
-    return beams[0]?.text || "";
-  }
-
-  // suggestTextは簡易版のまま (CanvasコンテキストがないためHybridの補正なし版として動作)
-  async suggestText(
-    lineFeatures: Float32Array, 
-    imgWidth: number, 
-    startX: number, 
-    maskData: Uint8ClampedArray | null = null,
-    blueChar: string = ':',
-    redChar: string = '/', 
-    maxChars: number = 3
-  ): Promise<string> {
-      let currentX = startX;
-      let resultText = "";
-      
-      for (let i = 0; i < maxChars; i++) {
-          if (currentX >= imgWidth - 4) break;
-          const centerX = currentX + 6; 
-          
-          let forcedChar = null;
-          if (maskData) {
-              const y = 16; 
-              const color = this.getColorAt(maskData, imgWidth, centerX, y);
-              if (color === 'blue') forcedChar = blueChar;
-              if (color === 'red') forcedChar = redChar;
-          }
-
-          if (forcedChar) {
-              const w = this.charWidthCache.get(forcedChar) || 8.0;
-              resultText += forcedChar;
-              currentX += w;
-              continue;
-          }
-
-          const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
-          const tensor = this.toTensor(patch, 1, 32, 32, 9);
-          
-          if (!this.session) break;
-          const res = await this.session.run({ input_image: tensor });
-          const keys = Object.keys(res);
-          const outputData = res[keys[0]!]!.data as Float32Array;
-          
-          let candidates: any[] = [];
-          if (this.mode === 'classifier') {
-              candidates = this.getMaskedTopKClasses(outputData, 5);
-          } else {
-              candidates = this.searchVectorDb(outputData, 5);
-          }
-
-          if (candidates.length === 0) break;
-
-          const best = this.pickBestWithHistory(candidates);
-          if (!best) break;
-          
-          if (best.char === ' ' || best.char === '　') {
-              if (i === 0) {
-                  resultText += best.char;
-                  // キャッシュがあればそれを使う
-                  currentX += (this.charWidthCache.get(best.char) || best.width);
-              }
-              break; 
-          }
-
-          resultText += best.char;
-          currentX += (this.charWidthCache.get(best.char) || best.width);
-      }
-
-      return resultText;
-  }
-
-  private pickBestWithHistory(candidates: { char: string, score: number, width: number }[]) {
-      const scored = candidates.map(c => {
-          const usage = this.usageHistory.get(c.char) || 0;
-          const bonus = usage * 0.05;
-          return { ...c, finalScore: c.score + bonus };
-      });
-      scored.sort((a, b) => b.finalScore - a.finalScore);
-      return scored[0];
-  }
-
+  // ... (getMaskedTopKClasses, searchVectorDb, extractPatch, toTensor, getLoadedCharList, recordUsage, suggestText)
   private getMaskedTopKClasses(logits: Float32Array, topK: number) {
       const indexed: { score: number, index: number }[] = [];
-      for(let i=0; i<logits.length; i++) {
+      const len = Math.min(logits.length, this.activeClassMask.length);
+      for(let i=0; i<len; i++) {
           if (this.activeClassMask[i]) {
               const score = logits[i] ?? -Infinity;
               indexed.push({ score, index: i });
@@ -440,11 +635,7 @@ export class InferenceEngine {
           const idx = item.index;
           const info = this.charDb[idx]; 
           if (info) {
-              results.push({ 
-                  char: info.char, 
-                  score: item.score, 
-                  width: info.width 
-              });
+              results.push({ char: info.char, score: item.score, width: info.width });
           }
       }
       return results;
@@ -452,53 +643,37 @@ export class InferenceEngine {
 
   private searchVectorDb(target: Float32Array, topK: number) {
     let norm = 0;
-    for(let i=0; i<target.length; i++) {
-        const val = target[i] ?? 0;
-        norm += val * val;
-    }
+    for(let i=0; i<target.length; i++) norm += target[i]! * target[i]!;
     norm = Math.sqrt(norm);
-    
     const t = new Float32Array(target.length);
-    if(norm > 1e-6) {
-        for(let i=0; i<target.length; i++) {
-             t[i] = (target[i] ?? 0) / norm;
-        }
-    }
+    if(norm > 1e-6) for(let i=0; i<target.length; i++) t[i] = target[i]! / norm;
 
     const scores = this.charDb.map(item => {
         if (this.allowedCharSet.size > 0 && !this.allowedCharSet.has(item.char)) {
             return { ...item, score: -Infinity };
         }
-
         if (!item.vector) return { ...item, score: -9999 };
         let dot = 0;
-        for(let i=0; i<t.length; i++) {
-             dot += t[i]! * (item.vector[i] ?? 0);
-        }
+        for(let i=0; i<t.length; i++) dot += t[i]! * item.vector[i]!;
         return { ...item, score: dot };
     });
-
     scores.sort((a, b) => b.score - a.score);
-    return scores.filter(s => s.score > -9000).slice(0, topK);
+    return scores.slice(0, topK);
   }
 
   private extractPatch(fullFeat: Float32Array, fullW: number, centerX: number): Float32Array {
      const size = 32;
      const result = new Float32Array(size * size * 9);
      const startX = Math.floor(centerX - 16);
-     
      for (let y = 0; y < size; y++) {
        for (let x = 0; x < size; x++) {
          const srcX = startX + x;
          const dstIdx = (y * size + x) * 9;
-         
          if (srcX < 0 || srcX >= fullW) {
              for(let c=0; c<9; c++) result[dstIdx + c] = 0;
          } else {
              const srcIdx = (y * fullW + srcX) * 9;
-             for(let c=0; c<9; c++) {
-                 result[dstIdx + c] = fullFeat[srcIdx + c] ?? 0;
-             }
+             for(let c=0; c<9; c++) result[dstIdx + c] = fullFeat[srcIdx + c] ?? 0;
          }
        }
      }
@@ -507,14 +682,126 @@ export class InferenceEngine {
 
   private toTensor(data: Float32Array, b: number, h: number, w: number, c: number): ort.Tensor {
      const float32 = new Float32Array(data.length);
-     for(let i=0; i<data.length; i++) {
-         float32[i] = (data[i] ?? 0) / 255.0;
-     }
+     for(let i=0; i<data.length; i++) float32[i] = data[i]! / 255.0;
      return new ort.Tensor('float32', float32, [b, h, w, c]);
   }
-    getLoadedCharList(): string {
-      const uniqueSet = new Set(this.fullClassList);
-      uniqueSet.delete(' ');
-      return Array.from(uniqueSet).join('');
+
+  getLoadedCharList(): string {
+      return Array.from(this.allowedCharSet).join('');
+  }
+  
+  recordUsage(text: string) {
+      for (const char of text) {
+          const count = this.usageHistory.get(char) || 0;
+          this.usageHistory.set(char, Math.min(count + 1, 50));
+      }
+  }
+
+  async suggestText(
+    lineFeatures: Float32Array, imgWidth: number, startX: number, maskData: Uint8ClampedArray | null = null,
+    blueChar: string = ':', redChar: string = '/', maxChars: number = 3
+  ): Promise<string> {
+      let currentX = startX;
+      let resultText = "";
+      
+      let tempCtx: CanvasRenderingContext2D | null = null;
+      if (this.mode === 'vector') {
+          const c = document.createElement('canvas');
+          c.width = 32; c.height = 32;
+          tempCtx = c.getContext('2d', { willReadFrequently: true });
+          if (tempCtx) {
+              tempCtx.font = `16px "${this.fontName}"`; 
+              tempCtx.textBaseline = 'top';
+          }
+      }
+
+      for (let i = 0; i < maxChars; i++) {
+          if (currentX >= imgWidth - 4) break;
+          const centerX = currentX + 6; 
+          
+          let forcedChar = null;
+          if (maskData) {
+              const y = 16; 
+              const color = this.getColorAt(maskData, imgWidth, centerX, y);
+              if (color === 'blue') forcedChar = blueChar;
+              if (color === 'red') forcedChar = redChar;
+          }
+          if (forcedChar) {
+              const w = this.charWidthCache.get(forcedChar) || 8.0;
+              resultText += forcedChar;
+              currentX += w;
+              continue;
+          }
+
+          const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
+
+          let centerInk = 0;
+          if (this.mode === 'vector') {
+             const cy = 16; const cx = 16;
+             for(let dy=-6; dy<6; dy++) {
+                for(let dx=-6; dx<6; dx++) {
+                    const idx = ((cy+dy)*32 + (cx+dx)) * 9;
+                    centerInk += patch[idx]!; 
+                }
+             }
+          } else {
+             let sum = 0;
+             for(let k=0; k<32*32; k++) sum += patch[k*9]!;
+             centerInk = sum / (32*32);
+          }
+
+          const threshold = (this.mode === 'vector') ? 30 : 15;
+          if (centerInk < threshold) {
+              if (i === 0) {
+                  resultText += " ";
+                  currentX += (this.charWidthCache.get(" ") || 8.0);
+              }
+              break; 
+          }
+
+          const tensor = this.toTensor(patch, 1, 32, 32, 9);
+          if (!this.session) break;
+          const res = await this.session.run({ input_image: tensor });
+          const keys = Object.keys(res);
+          const outputData = res[keys[0]!]!.data as Float32Array;
+          
+          let candidates: any[] = [];
+          if (this.mode === 'classifier') {
+              candidates = this.getMaskedTopKClasses(outputData, 5);
+          } else {
+              const baseCands = this.searchVectorDb(outputData, 15);
+              if (tempCtx) {
+                  // 局所推論では縦コンテキスト(prevBottomEdge)はないのでnullを渡す
+                  candidates = await this.rerankCandidates(patch, baseCands, tempCtx, null);
+              } else {
+                  candidates = baseCands;
+              }
+          }
+          
+          if (candidates.length === 0) break;
+          const best = this.pickBestWithHistory(candidates)!;
+          
+          if (best.char === ' ' || best.char === '　') {
+              if (i === 0) {
+                  resultText += best.char;
+                  currentX += (this.charWidthCache.get(best.char) || best.width);
+              }
+              break; 
+          }
+          resultText += best.char;
+          currentX += (this.charWidthCache.get(best.char) || best.width);
+      }
+      return resultText;
+  }
+
+  private pickBestWithHistory(candidates: { char: string, score: number, width: number, finalScore?: number }[]) {
+      const scored = candidates.map(c => {
+          const usage = this.usageHistory.get(c.char) || 0;
+          const bonus = usage * 0.05;
+          const baseScore = (c.finalScore !== undefined) ? c.finalScore : c.score;
+          return { ...c, selectionScore: baseScore + bonus };
+      });
+      scored.sort((a, b) => b.selectionScore - a.selectionScore);
+      return scored[0];
   }
 }

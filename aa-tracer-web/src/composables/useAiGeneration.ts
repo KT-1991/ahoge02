@@ -3,7 +3,6 @@ import { InferenceEngine, DEFAULT_CHARS } from '../utils/InferenceEngine';
 import { FeatureExtractor } from '../utils/FeatureExtractor';
 
 export function useAiGeneration() {
-    // --- State ---
     const engine = new InferenceEngine();
     const status = ref('BOOTING...');
     const isReady = ref(false);
@@ -18,24 +17,46 @@ export function useAiGeneration() {
         noiseGate: 0.3,
         generationMode: 'hybrid' as 'hybrid' | 'accurate' 
     });
+    
     const allCharCandidates = ref<string[]>(Array.from(new Set(DEFAULT_CHARS.split(''))));
+    const lineWeight = ref(0.6); // Classifier用の太さ設定 (コード1では0.6)
+    
+    // 文字セット管理
+    const charSetMode = ref<'all' | 'simple'>('all');
 
-    // Params
-    const lineWeight = ref(0.6);
     const targetCharBlue = ref(':');
     const targetCharRed = ref('/');
-
     const debugCanvasRef = ref<HTMLCanvasElement | null>(null);
 
-    // --- Actions ---
+    const applyCharSetMode = () => {
+        if (charSetMode.value === 'all') {
+            config.value.allowedChars = allCharCandidates.value.join('');
+        } else {
+            config.value.allowedChars = engine.getSafeCharList();
+        }
+        engine.updateAllowedChars(config.value.allowedChars);
+    };
+
+    const toggleCharSetMode = () => {
+        charSetMode.value = charSetMode.value === 'all' ? 'simple' : 'all';
+        applyCharSetMode();
+    };
+
     const initEngine = async () => {
         const checkCv = setInterval(async () => {
             if ((window as any).cvLoaded) {
                 clearInterval(checkCv);
                 status.value = 'LOADING AI...';
                 try {
-                    await engine.init('/aa_model_a.onnx', '/Saitamaar.ttf', '/aa_chars.json', 'classifier', 'Saitamaar');
-                    engine.updateFontMetrics('Saitamaar', config.value.allowedChars);
+                    await engine.init(
+                        '/aa_model_a.onnx', 
+                        '/aa_model_b.onnx', 
+                        '/Saitamaar.ttf', 
+                        '/aa_chars.json', 
+                        'classifier', // 初期値
+                        'Saitamaar'
+                    );
+                    
                     const loadedChars = engine.getLoadedCharList();
                     if (loadedChars.length > 0) {
                         const newSet = ' ' + loadedChars;
@@ -46,8 +67,8 @@ export function useAiGeneration() {
                     status.value = 'READY';
                     isReady.value = true;
                 } catch (e) {
-                    status.value = 'ERROR';
                     console.error(e);
+                    status.value = 'ERROR';
                 }
             }
         }, 100);
@@ -58,40 +79,15 @@ export function useAiGeneration() {
     };
 
     const toggleAllowedChar = (char: string) => {
-        let current = config.value.allowedChars;
-        if (current.includes(char)) {
-            config.value.allowedChars = current.replace(char, '');
-        } else {
-            config.value.allowedChars += char;
-        }
-        updateAllowedChars();
+       let current = config.value.allowedChars;
+       if (current.includes(char)) {
+           config.value.allowedChars = current.replace(char, '');
+       } else {
+           config.value.allowedChars += char;
+       }
+       updateAllowedChars();
     };
 
-    const visualizeFeatureMap = (features: Float32Array, width: number, height: number) => {
-        if (!debugCanvasRef.value) return;
-        const cvs = debugCanvasRef.value;
-        cvs.width = width; cvs.height = height;
-        const ctx = cvs.getContext('2d')!;
-        const imgData = ctx.createImageData(width, height);
-        const data = imgData.data;
-        let minVal = Infinity; let maxVal = -Infinity;
-        for (let i = 0; i < features.length; i += 9) {
-            const val = features[i]!;
-            if (val < minVal) minVal = val;
-            if (val > maxVal) maxVal = val;
-        }
-        if (maxVal === minVal) maxVal = minVal + 1;
-        
-        for (let i = 0; i < width * height; i++) {
-            const val = features[i * 9]!; 
-            const color = Math.floor((val - minVal) / (maxVal - minVal) * 255);
-            const idx = i * 4;
-            data[idx] = color; data[idx+1] = color; data[idx+2] = color; data[idx+3] = 255;
-        }
-        ctx.putImageData(imgData, 0, 0);
-    };
-
-    // --- Main Generation Loop ---
     const runGeneration = async (
         canvas: HTMLCanvasElement,
         paintBuffer: HTMLCanvasElement | null,
@@ -102,9 +98,22 @@ export function useAiGeneration() {
         isProcessing.value = true; 
         status.value = 'PROCESSING...';
         
+        // ★自動モード切替
+        const isDefaultFont = customFontName.value === 'Saitamaar';
+        const isFullCharSet = charSetMode.value === 'all'; 
+        // 厳密には config.value.allowedChars と allCharCandidates の比較が必要ですが
+        // charSetMode が 'all' なら概ねClassifier適用の意図とみなします
+
+        if (isDefaultFont && isFullCharSet) {
+            engine.mode = 'classifier';
+            console.log("Mode: Classifier");
+        } else {
+            engine.mode = 'vector';
+            console.log("Mode: Vector");
+        }
+
         engine.updateFontMetrics(customFontName.value, config.value.allowedChars);
 
-        // マスクレイヤーの準備 (paintBufferを変形して合わせる)
         let tempCtx: CanvasRenderingContext2D | null = null;
         if (paintBuffer) {
             const tempCvs = document.createElement('canvas');
@@ -120,28 +129,64 @@ export function useAiGeneration() {
 
         setTimeout(async () => {
             try {
-                const fullFeatures = FeatureExtractor.generate9ChInput(
-                    canvas, 
-                    lineWeight.value, 
-                    0 // Thinningは画像側で処理済み
-                );
+                // OpenCV処理
+                const ctx = canvas.getContext('2d')!;
+                // Classifierモードの場合は Canvas を直接渡す (generate9ChInputの仕様)
+                // Vectorモードの場合は ImageData -> Mat -> Skeletonize の手順
                 
-                visualizeFeatureMap(fullFeatures, canvas.width, canvas.height);
+                let fullFeatures: Float32Array;
+
+                if (engine.mode === 'classifier') {
+                    // 旧方式: 単純な太さ調整 + AdaptiveThreshold (黒背景)
+                    fullFeatures = FeatureExtractor.generate9ChInput(
+                        canvas, 
+                        lineWeight.value, 
+                        0, 
+                        tempCtx ? tempCtx.canvas : null
+                    );
+                } else {
+                    // 新方式: スケルトン化 -> ハイブリッド
+                    const imgData = ctx.getImageData(0, 0, canvas.width, canvas.height);
+                    const srcMat = (window as any).cv.matFromImageData(imgData);
+                    const skeletonMat = FeatureExtractor.skeletonize(srcMat);
+                    fullFeatures = FeatureExtractor.generate9ChInputFromSkeleton(
+                        skeletonMat, 
+                        tempCtx ? tempCtx.canvas : null
+                    );
+                    srcMat.delete(); skeletonMat.delete();
+                }
+                
+                // デバッグ表示
+                if (debugCanvasRef.value) {
+                    const dCtx = debugCanvasRef.value.getContext('2d')!;
+                    debugCanvasRef.value.width = canvas.width;
+                    debugCanvasRef.value.height = canvas.height;
+                    const idata = dCtx.createImageData(canvas.width, canvas.height);
+                    for(let i=0; i<canvas.width*canvas.height; i++) {
+                        idata.data[i*4] = fullFeatures[i*9]!;
+                        idata.data[i*4+1] = fullFeatures[i*9+3]!;
+                        idata.data[i*4+2] = 0;
+                        idata.data[i*4+3] = 255;
+                    }
+                    dCtx.putImageData(idata, 0, 0);
+                }
 
                 const w = canvas.width; const h = canvas.height;
-                const cropH = 32;
+                const cropH = 32; const lineH = 16;
                 let result = "";
-                // 画像がある範囲を推定してスキャン終了位置を決める
-                const imgBottom = (imageTransform.y + 2000 * imageTransform.scale) + 200; // 簡易
+                const imgBottom = (imageTransform.y + 2000 * imageTransform.scale) + 200; 
                 const scanLimitY = Math.min(h, imgBottom);
+                const measureCanvas = document.createElement('canvas');
+                const measureCtx = measureCanvas.getContext('2d')!;
+                measureCtx.font = `16px "${customFontName.value}"`;
 
-                const ctx = document.createElement('canvas').getContext('2d')!;
-                ctx.font = `16px "${customFontName.value}"`;
+                let prevLineBottomEdge: Float32Array | null = null;
 
-                for (let y = cropH / 2; y < scanLimitY - cropH / 2; y += 16) {
+                for (let y = cropH / 2; y < scanLimitY - cropH / 2; y += lineH) {
                     status.value = `ROW ${Math.floor(y/16)}`;
-                    
                     const startIdx = (y - cropH/2) * w * 9;
+                    if (startIdx + cropH * w * 9 > fullFeatures.length) break;
+                    
                     const lineFeat = fullFeatures.subarray(startIdx, startIdx + cropH * w * 9);
                     
                     let rowMaskData: Uint8ClampedArray | null = null;
@@ -151,26 +196,32 @@ export function useAiGeneration() {
                             rowMaskData = tempCtx.getImageData(0, srcY, w, 32).data;
                         }
                     }
-                    
-                    const lineText = await engine.solveLine(
-                        lineFeat, w, 
-                        targetCharBlue.value, targetCharRed.value, 
-                        rowMaskData, y,
-                        config.value.generationMode,
-                        ctx
+
+                    // solveLineの結果を受け取る (text と bottomEdge)
+                    const resultObj = await engine.solveLine(
+                        lineFeat, w, targetCharBlue.value, targetCharRed.value, 
+                        rowMaskData, y, config.value.generationMode, measureCtx,
+                        prevLineBottomEdge // ★前行の情報を渡す
                     );
                     
-                    result += lineText + "\n";
+                    result += resultObj.text + "\n";
+                    
+                    // ★次行のために保存
+                    prevLineBottomEdge = resultObj.bottomEdge;
+
                     aaOutputRef.value = result;
                     await new Promise(r => setTimeout(r, 0));
                 }
                 status.value = 'DONE';
-            } catch (err) { console.error(err); status.value = 'ERROR'; } 
-            finally { isProcessing.value = false; }
+            } catch (err) { 
+                console.error(err); status.value = 'ERROR'; 
+            } finally { 
+                isProcessing.value = false; 
+            }
         }, 50);
     };
     
-    // Ghost Suggestion
+    // getSuggestion等は変更なし
     const getSuggestion = async (
         canvas: HTMLCanvasElement,
         paintBuffer: HTMLCanvasElement | null,
@@ -178,15 +229,36 @@ export function useAiGeneration() {
         caretPixelX: number,
         lineY: number
     ): Promise<string> => {
+        // 1行分の画像を切り出す
         const rowCanvas = document.createElement('canvas');
         rowCanvas.width = canvas.width; rowCanvas.height = 32;
         const rowCtx = rowCanvas.getContext('2d', { willReadFrequently: true })!;
+        
+        // 座標計算（行の中心を合わせる）
         const srcY = Math.max(0, lineY - 8);
         const dstY = (lineY - 8 < 0) ? (8 - lineY) : 0;
         rowCtx.drawImage(canvas, 0, srcY, canvas.width, 32, 0, dstY, canvas.width, 32);
 
-        const features = FeatureExtractor.generate9ChInput(rowCanvas, lineWeight.value, 0);
+        let features: Float32Array;
 
+        // ★修正: モードに応じて前処理を切り替える
+        if (engine.mode === 'classifier') {
+             // Classifierモード: 旧方式 (単純な生成)
+             // lineWeightも反映させる
+             features = FeatureExtractor.generate9ChInput(rowCanvas, lineWeight.value, 0);
+        } else {
+             // Vectorモード: 新方式 (スケルトン化 -> ハイブリッド生成)
+             const ctx = rowCanvas.getContext('2d')!;
+             const imgData = ctx.getImageData(0, 0, rowCanvas.width, rowCanvas.height);
+             const srcMat = (window as any).cv.matFromImageData(imgData);
+             
+             const skeletonMat = FeatureExtractor.skeletonize(srcMat);
+             features = FeatureExtractor.generate9ChInputFromSkeleton(skeletonMat);
+             
+             srcMat.delete(); skeletonMat.delete();
+        }
+
+        // マスクデータの準備
         let rowMaskData: Uint8ClampedArray | null = null;
         if (paintBuffer) {
             const maskCvs = document.createElement('canvas');
@@ -201,6 +273,7 @@ export function useAiGeneration() {
             rowMaskData = mCtx.getImageData(0, 0, maskCvs.width, 32).data;
         }
 
+        // 推論実行
         return await engine.suggestText(
             features, rowCanvas.width, caretPixelX, 
             rowMaskData, targetCharBlue.value, targetCharRed.value, 3
@@ -212,7 +285,7 @@ export function useAiGeneration() {
         try {
             const fUrl = fontUrl || '/Saitamaar.ttf'; 
             const fName = fontName || 'Saitamaar';
-            await engine.init('/aa_model_a.onnx', fUrl, '/aa_chars.json', 'classifier', fName);
+            await engine.init('/aa_model_a.onnx', '/aa_model_b.onnx', fUrl, '/aa_chars.json', 'classifier', fName);
             engine.updateAllowedChars(config.value.allowedChars);
             customFontName.value = fName; 
             status.value = `DB UPDATED`;
@@ -220,22 +293,13 @@ export function useAiGeneration() {
     };
 
     return {
-        engine,
-        status,
-        isReady,
-        isProcessing,
-        config,
-        allCharCandidates,
-        customFontName,
-        lineWeight,
-        targetCharBlue,
-        targetCharRed,
-        debugCanvasRef,
-        initEngine,
-        toggleAllowedChar,
-        updateAllowedChars,
-        runGeneration,
-        getSuggestion,
-        rebuildDb
+        engine, status, isReady, isProcessing, config, allCharCandidates,
+        customFontName, 
+        lineWeight, 
+        targetCharBlue, targetCharRed, debugCanvasRef,
+        charSetMode, toggleCharSetMode,
+        initEngine, updateAllowedChars, runGeneration, 
+        getSuggestion, rebuildDb, 
+        toggleAllowedChar 
     };
 }

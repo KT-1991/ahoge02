@@ -1,37 +1,28 @@
-// src/utils/FeatureExtractor.ts
 declare const cv: any;
 
 export class FeatureExtractor {
   static CROP_SIZE = 32;
   static LINE_HEIGHT = 16;
 
-  static generate9ChInput(imgElement: HTMLImageElement | HTMLCanvasElement, 
-                          lineThreshold: number = 0.4,
-                          thinningIterations: number = 0,
-                          maskElement: HTMLCanvasElement | null = null // ★追加: 塗りレイヤー
-                          ): Float32Array {
+  // === Classifier用 (提供されたコード準拠) ===
+  static generate9ChInput(
+    imgElement: HTMLImageElement | HTMLCanvasElement, 
+    lineThreshold: number = 0.4, // ここは提供コードでは lineWeight ではなく threshold になっていた点に注意
+    thinningIterations: number = 0,
+    maskElement: HTMLCanvasElement | null = null
+  ): Float32Array {
     // 1. 画像読み込み
     const src = cv.imread(imgElement);
     const gray = new cv.Mat();
     cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
 
-    // =========================================================
-    // ★追加: モルフォロジー変換による細線化処理
-    // =========================================================
+    // モルフォロジー変換による細線化処理
     if (thinningIterations > 0) {
-      // 2値化してノイズを消してから処理したほうが綺麗に削れます
       cv.threshold(gray, gray, 200, 255, cv.THRESH_BINARY);
-
-      // 十字型のカーネルを作成（矩形より角が丸くならず、自然に削れます）
       const kernel = cv.getStructuringElement(cv.MORPH_CROSS, new cv.Size(3, 3));
-      
-      // 「白」を膨張させる ＝ 「黒」い線が細くなる
       cv.dilate(gray, gray, kernel, new cv.Point(-1, -1), thinningIterations);
-      
-      // メモリ解放
       kernel.delete();
     }
-    // =========================================================
 
     const h = gray.rows;
     const w = gray.cols;
@@ -73,70 +64,54 @@ export class FeatureExtractor {
     cv.GaussianBlur(binary, ch3, new cv.Size(15, 15), 0);
 
     // --- 2. カラーマスク (Hatching) の処理 ---
-    // デフォルトは真っ黒
-    const ch4 = new cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U); // Dot Body (Blue)
-    const ch5 = new cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U); // Line Body (Red)
-    const ch6 = new cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U); // Dot Border
-    const ch7 = new cv.Mat.zeros(gray.rows, gray.cols, cv.CV_8U); // Line Border
+    const ch4 = new cv.Mat.zeros(h, w, cv.CV_8U); // Dot Body (Blue)
+    const ch5 = new cv.Mat.zeros(h, w, cv.CV_8U); // Line Body (Red)
+    const ch6 = new cv.Mat.zeros(h, w, cv.CV_8U); // Dot Border
+    const ch7 = new cv.Mat.zeros(h, w, cv.CV_8U); // Line Border
 
     if (maskElement) {
-      // マスク画像を読み込み
       const maskSrc = cv.imread(maskElement);
       const rgbaPlanes = new cv.MatVector();
       cv.split(maskSrc, rgbaPlanes);
       
-      // RGBAなので: 0:R, 1:G, 2:B, 3:A
       const rPlane = rgbaPlanes.get(0);
       const bPlane = rgbaPlanes.get(2);
 
-      // 閾値処理 (塗られている部分を抽出)
-      // 赤成分があれば Ch5 (Line Pattern)
       cv.threshold(rPlane, ch5, 100, 255, cv.THRESH_BINARY);
-      // 青成分があれば Ch4 (Dot Pattern)
       cv.threshold(bPlane, ch4, 100, 255, cv.THRESH_BINARY);
 
-      // 境界抽出 (Erodeして差分を取る)
       const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
       
       const erodedDot = new cv.Mat();
       cv.erode(ch4, erodedDot, kernel);
-      cv.subtract(ch4, erodedDot, ch6); // Ch6
+      cv.subtract(ch4, erodedDot, ch6);
       
       const erodedLine = new cv.Mat();
       cv.erode(ch5, erodedLine, kernel);
-      cv.subtract(ch5, erodedLine, ch7); // Ch7
+      cv.subtract(ch5, erodedLine, ch7);
 
-      // メモリ解放
       maskSrc.delete(); rgbaPlanes.delete(); rPlane.delete(); bPlane.delete();
       kernel.delete(); erodedDot.delete(); erodedLine.delete();
     }
-    // カラーチャンネルのデータを取得
-    const ch4Data = ch4.data;
-    const ch5Data = ch5.data;
-    const ch6Data = ch6.data;
-    const ch7Data = ch7.data;
 
-    // --- メモリ確保 (Float32Array) ---
+    // --- Output ---
     const resultLen = h * w * 9;
     const resultData = new Float32Array(resultLen);
 
-    // 高速アクセスのためTypedArrayを取得
-    const skeletonData = skeleton.data; // Uint8
-    const angleData = angle.data32F; // Float32
-    const maskData = mask.data; // Uint8
-    const ch3Data = ch3.data; // Uint8
-    // カラーマスク(Ch4-7)は今回は省略(All 0)
+    const skeletonData = skeleton.data;
+    const angleData = angle.data32F;
+    const maskData = mask.data;
+    const ch3Data = ch3.data;
+    const ch4Data = ch4.data; const ch5Data = ch5.data;
+    const ch6Data = ch6.data; const ch7Data = ch7.data;
 
-    // ループ処理 (ここが重いのでTypedArrayでアクセス)
     for (let y = 0; y < h; y++) {
       for (let x = 0; x < w; x++) {
         const idx = y * w + x;
         const outIdx = idx * 9;
 
-        // Ch0: Skeleton
         resultData[outIdx + 0] = skeletonData[idx];
 
-        // Ch1, Ch2: Sin/Cos
         if (maskData[idx] > 0) {
            const a = angleData[idx];
            resultData[outIdx + 1] = ((Math.sin(a) + 1.0) / 2.0) * 255;
@@ -146,27 +121,120 @@ export class FeatureExtractor {
            resultData[outIdx + 2] = 0;
         }
 
-        // Ch3: Density
         resultData[outIdx + 3] = ch3Data[idx];
-
-        // Ch4-7: Dummy (Color masks)
-// Ch4 - Ch7 (今回追加)
-        resultData[outIdx + 4] = ch4Data[idx]; // Dot Body
-        resultData[outIdx + 5] = ch5Data[idx]; // Line Body
-        resultData[outIdx + 6] = ch6Data[idx]; // Dot Border
-        resultData[outIdx + 7] = ch7Data[idx]; // Line Border
-
-        // Ch8: Grid
+        resultData[outIdx + 4] = ch4Data[idx];
+        resultData[outIdx + 5] = ch5Data[idx];
+        resultData[outIdx + 6] = ch6Data[idx];
+        resultData[outIdx + 7] = ch7Data[idx];
         resultData[outIdx + 8] = ((x + y) % 2) * 255;
       }
     }
 
-    // メモリ解放
     src.delete(); gray.delete(); blurred.delete(); binary.delete();
     dist.delete(); skeleton.delete(); blurredF32.delete();
     gx.delete(); gy.delete(); mag.delete(); angle.delete(); mask.delete(); ch3.delete();
     ch4.delete(); ch5.delete(); ch6.delete(); ch7.delete();
 
+    return resultData;
+  }
+
+  // === Vector用 (Code B準拠) ===
+  static skeletonize(src: any): any {
+    const gray = new cv.Mat();
+    if (src.channels() === 4) cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    else src.copyTo(gray);
+
+    const binary = new cv.Mat();
+    // 白背景(255) -> 黒背景(0)
+    cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
+
+    const skeleton = new cv.Mat.zeros(binary.rows, binary.cols, cv.CV_8U);
+    const temp = new cv.Mat();
+    const eroded = new cv.Mat();
+    const element = cv.getStructuringElement(cv.MORPH_CROSS, new cv.Size(3, 3));
+    
+    const img = binary.clone();
+    let done = false;
+    while (!done) {
+        cv.erode(img, eroded, element);
+        cv.dilate(eroded, temp, element);
+        cv.subtract(img, temp, temp);
+        cv.bitwise_or(skeleton, temp, skeleton);
+        eroded.copyTo(img);
+        if (cv.countNonZero(img) === 0) done = true;
+    }
+
+    // 白背景・黒文字に戻す (1px)
+    const result = new cv.Mat();
+    cv.bitwise_not(skeleton, result);
+
+    gray.delete(); binary.delete(); skeleton.delete();
+    temp.delete(); eroded.delete(); element.delete(); img.delete();
+    return result;
+  }
+
+  static generate9ChInputFromSkeleton(skeletonSrc: any, maskElement: any = null): Float32Array {
+    console.log(maskElement);
+    const h = skeletonSrc.rows;
+    const w = skeletonSrc.cols;
+
+    // 1pxスケルトン (黒背景)
+    const imgSkeletonInv = new cv.Mat();
+    cv.bitwise_not(skeletonSrc, imgSkeletonInv);
+
+    // 3px太らせ画像 (黒背景)
+    const kernelFat = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
+    const imgFatInv = new cv.Mat();
+    cv.dilate(imgSkeletonInv, imgFatInv, kernelFat, new cv.Point(-1, -1), 1);
+    
+    // Ch0: Skeleton (1px版)
+    const ch0 = imgSkeletonInv; 
+
+    // Ch1, Ch2: Angle (3px版)
+    const imgFat = new cv.Mat();
+    cv.bitwise_not(imgFatInv, imgFat); // 白背景(3px)
+    const blurredFat = new cv.Mat();
+    cv.GaussianBlur(imgFat, blurredFat, new cv.Size(3, 3), 0);
+    const blurredFatF32 = new cv.Mat();
+    blurredFat.convertTo(blurredFatF32, cv.CV_32F);
+    
+    const gx = new cv.Mat(); const gy = new cv.Mat();
+    cv.Sobel(blurredFatF32, gx, cv.CV_32F, 1, 0, 3);
+    cv.Sobel(blurredFatF32, gy, cv.CV_32F, 0, 1, 3);
+    const mag = new cv.Mat(); const angle = new cv.Mat();
+    cv.cartToPolar(gx, gy, mag, angle, false);
+    const maskMat = new cv.Mat();
+    cv.threshold(mag, maskMat, 30, 255, cv.THRESH_BINARY);
+    maskMat.convertTo(maskMat, cv.CV_8U);
+
+    // Ch3: Density (3px版)
+    const ch3 = new cv.Mat();
+    cv.GaussianBlur(imgFatInv, ch3, new cv.Size(15, 15), 0);
+
+    const resultLen = h * w * 9;
+    const resultData = new Float32Array(resultLen);
+    const d0 = ch0.data; const dAng = angle.data32F; const dMask = maskMat.data; const d3 = ch3.data;
+
+    for (let y = 0; y < h; y++) {
+        for (let x = 0; x < w; x++) {
+            const idx = y * w + x;
+            const outIdx = idx * 9;
+            resultData[outIdx + 0] = d0[idx];
+            if (dMask[idx] > 0) {
+                const a = dAng[idx];
+                resultData[outIdx + 1] = ((Math.sin(a) + 1.0) / 2.0) * 255;
+                resultData[outIdx + 2] = ((Math.cos(a) + 1.0) / 2.0) * 255;
+            } else {
+                resultData[outIdx + 1] = 0; resultData[outIdx + 2] = 0;
+            }
+            resultData[outIdx + 3] = d3[idx];
+            resultData[outIdx + 8] = ((x + y) % 2) * 255;
+        }
+    }
+
+    imgSkeletonInv.delete(); kernelFat.delete(); imgFatInv.delete(); imgFat.delete();
+    blurredFat.delete(); blurredFatF32.delete(); gx.delete(); gy.delete(); mag.delete();
+    angle.delete(); maskMat.delete(); ch3.delete();
     return resultData;
   }
 }

@@ -6,8 +6,8 @@ const props = defineProps<{
   splitDirection: 'horizontal' | 'vertical';
   isLayoutSwapped: boolean;
   tracePaneRatio: number;
-  aaOutput: string; // v-model
-  currentAaTitle: string; // v-model
+  aaOutput: string;
+  currentAaTitle: string;
   sourceImage: HTMLImageElement | null;
   canvasDims: { width: number, height: number };
   traceOpacity: number;
@@ -22,8 +22,8 @@ const props = defineProps<{
   ghostText: string;
   aaTextColor: string;
   highlightedHTML: string;
-// ★追加: ペイント中（Imageタブ選択中）かどうかを受け取るフラグ
-  isPaintingActive: boolean;
+  // ★重要: ペイント中かどうか
+  isPaintingActive: boolean; 
 }>();
 
 const emit = defineEmits<{
@@ -35,7 +35,7 @@ const emit = defineEmits<{
   (e: 'mousedown-canvas', ev: MouseEvent): void;
   (e: 'wheel-canvas', ev: WheelEvent): void;
   (e: 'input-text', ev: Event): void;
-  (e: 'click-text'): void;
+  (e: 'click-text', ev: MouseEvent): void;
   (e: 'keydown-text', ev: KeyboardEvent): void;
   (e: 'keypress-text', ev: KeyboardEvent): void;
   (e: 'keyup-text', ev: KeyboardEvent): void;
@@ -46,79 +46,53 @@ const emit = defineEmits<{
   (e: 'paste-text', ev: ClipboardEvent): void;
 }>();
 
-// Refs to expose to parent
 const canvasRef = ref<HTMLCanvasElement | null>(null);
 const maskCanvasRef = ref<HTMLCanvasElement | null>(null);
 const paintCanvasRef = ref<HTMLCanvasElement | null>(null);
 const paintMaskRef = ref<HTMLCanvasElement | null>(null);
 const editorStackRef = ref<HTMLElement | null>(null);
-
-// テキストエリアへの参照を追加
 const traceTextareaRef = ref<HTMLTextAreaElement | null>(null);
 const textTextareaRef = ref<HTMLTextAreaElement | null>(null);
 
-// ★追加: カーソル位置への文字挿入とフォーカス復帰
 const insertAtCursor = (text: string, targetEditor: 'trace' | 'text' | null) => {
   const target = targetEditor === 'text' ? textTextareaRef.value : traceTextareaRef.value;
   if (!target) return;
-
   const start = target.selectionStart;
   const end = target.selectionEnd;
   const currentVal = props.aaOutput;
-
-  // 新しいテキストを作成
   const newVal = currentVal.substring(0, start) + text + currentVal.substring(end);
-  
-  // 親へ更新通知
   emit('update:aaOutput', newVal);
-  
-  // カーソル位置の更新とフォーカス (DOM更新後に行う)
   nextTick(() => {
     target.focus();
     target.selectionStart = target.selectionEnd = start + text.length;
-    // 入力イベントを発火させて履歴記録などを促す
     emit('input-text', { target } as any);
   });
 };
 
 defineExpose({
-  canvasRef,
-  maskCanvasRef,
-  paintCanvasRef,
-  paintMaskRef,
-  editorStackRef,
-  insertAtCursor // ★ここ重要
+  canvasRef, maskCanvasRef, paintCanvasRef, paintMaskRef, editorStackRef, insertAtCursor
 });
 
 // Resize Logic
 const isResizingPane = ref(false);
-
 const startResizePane = () => {
   isResizingPane.value = true;
   window.addEventListener('mousemove', onResizePane);
   window.addEventListener('mouseup', stopResizePane);
 };
-
 const onResizePane = (e: MouseEvent) => {
   if (!editorStackRef.value) return;
   const rect = editorStackRef.value.getBoundingClientRect();
   let ratio = 0.5;
-  if (props.splitDirection === 'horizontal') {
-    ratio = (e.clientY - rect.top) / rect.height;
-  } else {
-    ratio = (e.clientX - rect.left) / rect.width;
-  }
+  if (props.splitDirection === 'horizontal') ratio = (e.clientY - rect.top) / rect.height;
+  else ratio = (e.clientX - rect.left) / rect.width;
   emit('update:tracePaneRatio', Math.min(0.9, Math.max(0.1, ratio)));
 };
-
 const stopResizePane = () => {
   isResizingPane.value = false;
   window.removeEventListener('mousemove', onResizePane);
   window.removeEventListener('mouseup', stopResizePane);
 };
-
-
-
 onUnmounted(() => stopResizePane());
 </script>
 
@@ -165,7 +139,7 @@ onUnmounted(() => stopResizePane());
                     :class="{ 'box-mode-active': isBoxSelecting }"
                     :value="aaOutput"
                     @input="$emit('update:aaOutput', ($event.target as HTMLInputElement).value); $emit('input-text', $event)"
-                    @click="$emit('click-text')" 
+                    @click="$emit('click-text', $event)"
                     @keydown="$emit('keydown-text', $event)"
                     @keypress="$emit('keypress-text', $event)"
                     @keyup="$emit('keyup-text', $event)"
@@ -177,9 +151,10 @@ onUnmounted(() => stopResizePane());
                     placeholder="Type or Drag Image Here..."
                     :style="{ 
                         color: aaTextColor, 
-                        /* ★修正: ペイント中(Imageタブ)なら操作無効、そうでなければ有効 */
+                        /* ★修正: ペイント中はクリック無効だが、表示はくっきり(opacity: 1)させる */
                         pointerEvents: isPaintingActive ? 'none' : 'auto', 
-                        opacity: isPaintingActive ? 0.3 : 1 
+                        opacity: 1,
+                        zIndex: 20 /* ★修正: ペイントレイヤー(z=10)より上にする */
                     }">
           </textarea>
         </div>
@@ -205,7 +180,7 @@ onUnmounted(() => stopResizePane());
                   :class="{ 'box-mode-active': isBoxSelecting }"
                   :value="aaOutput"
                   @input="$emit('update:aaOutput', ($event.target as HTMLInputElement).value); $emit('input-text', $event)"
-                  @click="$emit('click-text')"
+                  @click="$emit('click-text', $event)"
                   @keyup="$emit('keyup-text', $event)"
                   @focus="$emit('focus-text', 'text')"
                   @mousedown="$emit('mousedown-textarea', $event, 'text')"
@@ -218,68 +193,63 @@ onUnmounted(() => stopResizePane());
     </div>
   </main>
 </template>
+
 <style lang="css" scoped>
-/* 共通設定: フォント、サイズ、行間、余白を完全に一致させる */
+/* 共通設定 */
 .aa-textarea,
 .aa-highlight-layer {
-    /* フォント設定 */
     font-family: var(--font-aa);
     font-size: 16px;
-    line-height: 16px; /* または 18px など固定値 */
+    line-height: 16px; /* AIに合わせて固定 */
     letter-spacing: 0;
-    
-    /* 配置と余白の統一 ★ここが重要 */
-    padding: 10px;       /* 任意の値を設定し、両方揃える */
-    border: 1px solid transparent; /* 枠線の太さも揃える */
-    box-sizing: border-box; /* パディングを含めたサイズ計算にする */
-    
+    padding: 10px;
+    border: 1px solid transparent;
+    box-sizing: border-box;
     width: 100%;
     min-height: 100%;
-    white-space: pre; /* 折り返しなしで統一 */
-    overflow: auto;   /* スクロール挙動 */
+    white-space: pre;
+    overflow: auto;
     margin: 0;
 }
 
-/* ハイライトレイヤー固有 */
+/* ハイライトレイヤー */
 .aa-highlight-layer {
     position: absolute;
-    top: 0;
-    left: 0;
-    color: transparent; /* 文字自体は透明 */
-    pointer-events: none; /* クリックを透過 */
+    top: 0; left: 0;
+    color: transparent;
+    pointer-events: none;
     z-index: 5;
     background: transparent;
-    /* borderは見えなくて良いが、サイズ計算のためにtransparentで存在させる */
 }
 
-/* テキストエリア固有 */
+/* テキストエリア */
 .aa-textarea {
     position: relative;
-    z-index: 10;
+    z-index: 20; /* ★修正: 最前面へ */
     background: transparent;
     color: var(--aa-text-color);
     resize: none;
     outline: none;
-    display: block; /* 隙間防止 */
+    display: block;
 }
 
-/* エラー箇所のスタイル */
-.err-char {
-    background-color: rgba(255, 0, 0, 0.2);
-    border-bottom: 2px solid red;
-}
-.err-lead {
-    background-color: rgba(255, 165, 0, 0.3);
-    border-bottom: 2px solid orange;
-}
-.err-seq {
-    background-color: rgba(255, 165, 0, 0.3);
-    border-bottom: 2px dotted orange;
-}
-.anchor-highlight {
-    color: rgba(0, 0, 255, 0.3) !important;
-    border-bottom: 2px solid blue;
-}
-
-
+/* その他のスタイル */
+.aa-title-input { border:none; background:transparent; font-weight:bold; font-size:1rem; width:200px; color:#333; }
+.aa-title-input:focus { outline:none; border-bottom:1px solid #ccc; }
+.hint { color:#888; font-size:0.8rem; margin-right:10px; }
+.card-header { padding:8px 10px; background:#f9f9f9; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; flex: 0 0 32px; }
+.resize-handle { flex:0 0 8px; background:#f5f5f5; border:1px solid #ddd; display:flex; align-items:center; justify-content:center; cursor:row-resize; z-index:50; }
+.resize-handle.handle-v { cursor:col-resize; flex-direction:column; }
+.handle-bar { width:30px; height:3px; background:#ccc; border-radius:2px; }
+.resize-handle.handle-v .handle-bar { width:3px; height:30px; }
+.editor-stack { display:flex; height:100%; width:100%; overflow:hidden; }
+.editor-card { display:flex; flex-direction:column; background:#fff; overflow:hidden; position:relative; min-width:0; min-height:0; }
+.aa-canvas-wrapper { flex:1; position:relative; overflow:auto; background:#fff; }
+.canvas-scroll-area { position:relative; min-width:100%; min-height:100%; }
+.canvas-layers { position:absolute; top:0; left:0; pointer-events:none; }
+.layer-base, .layer-mask { position:absolute; top:0; left:0; }
+.box-overlay-container { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:30; }
+.box-selection-line { position:absolute; background-color:rgba(0,100,255,0.2); }
+.ghost-layer { position:absolute; top:0; left:0; pointer-events:none; z-index:25; }
+.ghost-text { position:absolute; font-family:var(--font-aa); font-size:16px; line-height:16px; color:rgba(0,0,0,0.3); white-space:pre; background:rgba(255,255,0,0.2); }
 </style>

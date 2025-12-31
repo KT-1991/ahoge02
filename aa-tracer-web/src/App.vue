@@ -4,6 +4,7 @@ import { useProjectSystem } from './composables/useProjectSystem';
 import { useCanvasPaint } from './composables/useCanvasPaint';
 import { useLineArt } from './composables/useLineArt';
 import { useAiGeneration } from './composables/useAiGeneration';
+import { debounce } from './utils/common'; // ★追加: デバウンス関数
 
 // Components
 import AppHeader from './components/AppHeader.vue';
@@ -14,8 +15,6 @@ import AaWorkspace from './components/AaWorkspace.vue';
 import AaGridOverlay from './components/AaGridOverlay.vue';
 import AaReferenceWindow from './components/AaReferenceWindow.vue';
 
-import { debounce } from './utils/common'; // ★追加
-
 // --- Composables ---
 const project = useProjectSystem();
 const paint = useCanvasPaint();
@@ -23,12 +22,11 @@ const lineArt = useLineArt();
 const ai = useAiGeneration();
 
 // --- Template Aliases ---
-const { projectAAs, currentAAIndex, aaOutput, historyChars, highlightedHTML } = project;
+const { projectAAs, currentAAIndex, aaOutput, historyChars } = project;
 
 // --- Local UI State ---
 const workspaceRef = ref<InstanceType<typeof AaWorkspace> | null>(null);
 const canvasRef = computed(() => workspaceRef.value?.canvasRef || null);
-const maskCanvasRef = computed(() => workspaceRef.value?.maskCanvasRef || null);
 const paintCanvasRef = computed(() => workspaceRef.value?.paintCanvasRef || null);
 const paintMaskRef = computed(() => workspaceRef.value?.paintMaskRef || null);
 
@@ -45,7 +43,6 @@ const showConfigModal = ref(false);
 const showExportModal = ref(false);
 const showDebugModal = ref(false);
 const showPaletteEditor = ref(false); 
-const isExportingVideo = ref(false); 
 
 // Cursor / Ghost
 const ghostText = ref('');
@@ -54,6 +51,7 @@ const isGhostVisible = ref(false);
 const activeEditor = ref<'trace' | 'text' | null>(null);
 const caretSyncPos = ref({ x: 0, y: 0 });
 const cursorInfo = ref({ row: 1, col: 1, charCount: 0, px: 0 });
+const lastCaretIndex = ref(-1); // キャレット位置の変更検知用
 
 // Box Selection
 const boxSelectionRects = ref<any[]>([]);
@@ -123,11 +121,11 @@ onMounted(async () => {
     project.resetHistory();
     loadPaletteFromStorage();
     
-    // キーボードイベント
+    // Key Events
     window.addEventListener('keydown', (e) => { if (e.key === 'Alt') isAltPressed.value = true; });
     window.addEventListener('keyup', (e) => { if (e.key === 'Alt') isAltPressed.value = false; });
     
-    // ★追加: マウスイベントの登録 (これが抜けていました)
+    // ★重要: Mouse Eventsの登録
     window.addEventListener('mouseup', onGlobalMouseUp);
     window.addEventListener('mousemove', onGlobalMouseMove);
     
@@ -135,7 +133,7 @@ onMounted(async () => {
 });
 
 onUnmounted(() => {
-    // ★追加: クリーンアップ
+    // クリーンアップ
     window.removeEventListener('mouseup', onGlobalMouseUp);
     window.removeEventListener('mousemove', onGlobalMouseMove);
 });
@@ -195,11 +193,10 @@ const triggerLoadWrapper = (enc: string) => {
     document.getElementById('fileInput')?.click();
 };
 
-// Config toggle wrapper (Fix for error)
+// Config toggle wrapper
 const toggleSafeMode = () => {
-// 設定変更を反映
+    // 設定変更を反映し、ハイライトを即座に更新
     ai.initEngine(); 
-    // ハイライトを即座に更新
     project.updateSyntaxHighlight(ai.config.value.safeMode);
 };
 
@@ -214,8 +211,14 @@ const onImageLoaded = (file: File) => {
         await nextTick();
         paint.imgTransform.value = { x: 0, y: 0, scale: 1.0, rotation: 0 };
         await paint.updateCanvasDimensions();
-        lineArt.rawLineArtCanvas.value = null; lineArt.processedSource.value = null;
+        
+        // リセット
+        lineArt.rawLineArtCanvas.value = null; 
+        lineArt.processedSource.value = null;
+        
+        // 初期処理
         if (lineArt.thinningLevel.value > 0) lineArt.processSourceImage(null, img);
+        
         ai.status.value = 'IMAGE LOADED';
         renderAllCanvases();
     };
@@ -223,35 +226,89 @@ const onImageLoaded = (file: File) => {
 
 const renderAllCanvases = () => {
     if (!canvasRef.value || !paintCanvasRef.value) return;
+    // LineArt加工済みがあればそれ、なければ元画像
     const src = lineArt.processedSource.value || paint.sourceImage.value;
+    
     renderLayer(canvasRef.value, src);
-    if (paint.paintBuffer.value) renderLayer(paintCanvasRef.value, paint.paintBuffer.value);
+    if (paint.paintBuffer.value) {
+        renderLayer(paintCanvasRef.value, paint.paintBuffer.value);
+    }
 };
 
 const renderLayer = (targetCanvas: HTMLCanvasElement, source: HTMLImageElement | HTMLCanvasElement | null) => {
     const ctx = targetCanvas.getContext('2d', { willReadFrequently: true })!;
     const w = targetCanvas.width; const h = targetCanvas.height;
+    
+    // 全体クリア
     ctx.clearRect(0, 0, w, h);
-    if (targetCanvas === canvasRef.value) { ctx.fillStyle = "white"; ctx.fillRect(0, 0, w, h); }
+    
+    // ベースレイヤーだけ背景白塗り
+    if (targetCanvas === canvasRef.value) { 
+        ctx.fillStyle = "white"; 
+        ctx.fillRect(0, 0, w, h); 
+    }
+    
     if (!source) return;
+    
     ctx.save();
     ctx.translate(paint.imgTransform.value.x, paint.imgTransform.value.y);
     ctx.rotate(paint.imgTransform.value.rotation * Math.PI / 180);
     ctx.scale(paint.imgTransform.value.scale, paint.imgTransform.value.scale);
+    ctx.imageSmoothingEnabled = true; // 綺麗に描画
+    ctx.imageSmoothingQuality = 'high';
     ctx.drawImage(source, 0, 0);
     ctx.restore();
 };
 
-const updateImageTransformWrapper = async () => { await paint.updateCanvasDimensions(); renderAllCanvases(); };
-const processImageWrapper = () => { if (canvasRef.value) ai.runGeneration(canvasRef.value, paint.paintBuffer.value, paint.imgTransform.value, project.aaOutput); };
-const extractLineArtWrapper = async () => { if (paint.sourceImage.value) { await lineArt.extractLineArt(paint.sourceImage.value); sidebarTab.value = 'image'; renderAllCanvases(); } };
+const updateImageTransformWrapper = async () => { 
+    await paint.updateCanvasDimensions(); 
+    renderAllCanvases(); 
+};
 
-// Font change handler
+const processImageWrapper = () => { 
+    if (canvasRef.value) {
+        ai.runGeneration(canvasRef.value, paint.paintBuffer.value, paint.imgTransform.value, project.aaOutput); 
+    }
+};
+
+const extractLineArtWrapper = async () => { 
+    if (paint.sourceImage.value) { 
+        await lineArt.extractLineArt(paint.sourceImage.value); 
+        sidebarTab.value = 'image'; 
+        renderAllCanvases(); 
+    } 
+};
+
+// Font change handler (修正版)
 const onFontFileChange = async (e: Event) => {
   const file = (e.target as HTMLInputElement).files?.[0];
   if (file) {
       const url = URL.createObjectURL(file);
-      await ai.rebuildDb(url, file.name.split('.')[0]!);
+      const fontName = file.name.split('.')[0];
+      
+      // ステータス更新
+      ai.status.value = 'OPTIMIZING AI...';
+      
+      // UIの描画更新のために少し待機
+      await new Promise(r => setTimeout(r, 50));
+
+      try {
+          // カスタムフォントなので強制的に Vector モードにする
+          ai.engine.mode = 'vector';
+          ai.customFontName.value = fontName!;
+
+          // エンジンのDBを再構築 (URL, 現在の許可文字リスト, フォント名)
+          await ai.engine.updateDatabase(
+              url, 
+              ai.config.value.allowedChars, 
+              fontName!
+          );
+          
+          ai.status.value = 'READY (VEC)';
+      } catch (err) {
+          console.error(err);
+          ai.status.value = 'FONT ERROR';
+      }
   }
 };
 
@@ -266,25 +323,25 @@ const invertColor = () => {
     aaTextColor.value = y > 128 ? '#222222' : '#ffffff';
 };
 
-// マウスダウン処理（キャンバス上）
+// Paint Event Handlers (Fix)
 const onMouseDownCanvas = (e: MouseEvent) => {
     if (ai.isProcessing.value) return;
-
-    // Moveモードの場合
+    
+    // Move Mode
     if (paint.paintMode.value === 'move') {
         paint.isDraggingImage.value = true;
         paint.lastMousePos.value = { x: e.clientX, y: e.clientY };
-        e.preventDefault(); // ドラッグ時の選択などを防止
+        e.preventDefault(); 
         return;
     }
     
-    // ペイント処理 (バケツ・ブラシ)
-    // ... (既存のコードと同じ) ...
+    // Paint Mode: Buffer Check
     if (!paint.paintBuffer.value && paint.sourceImage.value) {
         paint.initPaintBuffer(paint.sourceImage.value.width, paint.sourceImage.value.height);
     }
     if (!paint.paintBuffer.value) return;
 
+    // Calc Pos
     const rect = (e.target as HTMLElement).getBoundingClientRect();
     const screenPos = { x: e.clientX - rect.left, y: e.clientY - rect.top };
     const imgPos = paint.toImageSpace(screenPos.x, screenPos.y);
@@ -298,9 +355,6 @@ const onMouseDownCanvas = (e: MouseEvent) => {
         ctx.beginPath();
         ctx.moveTo(imgPos.x, imgPos.y);
         ctx.lineCap = 'round'; ctx.lineJoin = 'round';
-        
-        // グローバル変数ではなく、paint状態管理を使うのが理想ですが、
-        // 既存実装に合わせて window オブジェクトを使用します
         (window as any).isPaintDragging = true;
         (window as any).lastImgPos = imgPos;
         
@@ -314,48 +368,35 @@ const onMouseDownCanvas = (e: MouseEvent) => {
     }
 };
 
-// グローバルマウス移動処理
 const onGlobalMouseMove = (e: MouseEvent) => {
     if (ai.isProcessing.value) return;
-
-    // 画像移動 (Moveモード)
+    
+    // Image Moving
     if (paint.isDraggingImage.value && paint.paintMode.value === 'move') {
         const dx = e.clientX - paint.lastMousePos.value.x;
         const dy = e.clientY - paint.lastMousePos.value.y;
-        
-        // 座標更新
         paint.imgTransform.value.x += dx;
         paint.imgTransform.value.y += dy;
-        
         paint.lastMousePos.value = { x: e.clientX, y: e.clientY };
         
-        // ★重要: 確実に再描画を呼ぶ
+        // アニメーションフレームで再描画 (滑らかさ向上)
         requestAnimationFrame(() => {
             renderAllCanvases();
         });
         return;
     }
-
-    // ブラシ描画 (Paintモード)
+    
+    // Paint Drawing
     if (sidebarTab.value === 'image' && (window as any).isPaintDragging && paint.paintBuffer.value && paintMaskRef.value) {
          const rect = paintMaskRef.value.getBoundingClientRect();
          const imgPos = paint.toImageSpace(e.clientX - rect.left, e.clientY - rect.top);
          const lastPos = (window as any).lastImgPos;
-         
          const ctx = paint.paintBuffer.value.getContext('2d')!;
-         ctx.lineWidth = paint.brushSize.value; 
-         ctx.lineCap = 'round'; 
-         ctx.lineJoin = 'round';
-         
+         ctx.lineWidth = paint.brushSize.value; ctx.lineCap='round'; ctx.lineJoin='round';
          const isEraser = paint.paintMode.value === 'eraser' || e.buttons === 2;
          ctx.globalCompositeOperation = isEraser ? 'destination-out' : 'source-over';
-         if (!isEraser) ctx.strokeStyle = paint.paintColor.value === 'blue' ? '#0000FF' : '#FF0000';
-         
-         ctx.beginPath(); 
-         ctx.moveTo(lastPos.x, lastPos.y); 
-         ctx.lineTo(imgPos.x, imgPos.y); 
-         ctx.stroke();
-         
+         if(!isEraser) ctx.strokeStyle = paint.paintColor.value === 'blue' ? '#0000FF' : '#FF0000';
+         ctx.beginPath(); ctx.moveTo(lastPos.x, lastPos.y); ctx.lineTo(imgPos.x, imgPos.y); ctx.stroke();
          (window as any).lastImgPos = imgPos;
          
          requestAnimationFrame(() => {
@@ -363,24 +404,25 @@ const onGlobalMouseMove = (e: MouseEvent) => {
          });
     }
 };
-const onGlobalMouseUp = () => { paint.isDraggingImage.value = false; (window as any).isPaintDragging = false; };
+const onGlobalMouseUp = () => { 
+    paint.isDraggingImage.value = false; 
+    (window as any).isPaintDragging = false; 
+};
 
 // Config handler
-const onConfigUpdate = () => {
-    ai.updateAllowedChars();
-    // 設定変更時にハイライト更新
+const onConfigUpdate = async () => {
+    await ai.updateAllowedChars(); // DB再構築も含む
     project.updateSyntaxHighlight(ai.config.value.safeMode);
 };
 
-// パレットから文字を追加するラッパー関数
+// ★追加: パレットから文字を追加するラッパー関数
 const addCharWrapper = (char: string) => {
-    // 1. 履歴に追加 (ProjectSystem)
+    if (!char) return;
+    
+    // 1. 履歴に追加
     project.recordCharHistory(char);
     
-    // 2. 履歴保存用のアクション (本来は aaOutput更新後に行うべきだが、Workspace側の emit('input-text') で処理されるのでここでは不要)
-    // ただし、Undoスタックへの登録タイミングを制御するため、明示的に commitHistory を呼んでも良い
-    
-    // 3. Workspaceに挿入命令を送る
+    // 2. Workspaceに挿入命令を送る
     if (workspaceRef.value) {
         // activeEditor が null の場合は 'trace' (メイン) に入れる
         workspaceRef.value.insertAtCursor(char, activeEditor.value || 'trace');
@@ -403,7 +445,7 @@ const updateLineArtPreview = debounce(() => {
     
     // 画面更新
     renderAllCanvases();
-}, 150); // 150msの遅延 (スライダー操作中は実行されない)
+}, 150); // 150msの遅延
 
 // 監視設定
 watch(
@@ -417,9 +459,138 @@ watch(
     { deep: true }
 );
 
+// --- Helper: キャレットのピクセル座標を計算 (修正版) ---
+const getCaretPixelPos = (
+    textarea: HTMLTextAreaElement, 
+    text: string, 
+    caretIdx: number
+): { x: number, y: number, row: number, col: number } | null => {
+    // 1. 行と列を特定
+    const textBefore = text.substring(0, caretIdx);
+    const lines = textBefore.split('\n');
+    const row = lines.length - 1;
+    const currentLineText = lines[row]!;
+    
+    // 2. 文字幅を計測
+    const ctx = document.createElement('canvas').getContext('2d')!;
+    ctx.font = `16px "${ai.customFontName.value}"`;
+    const textWidth = ctx.measureText(currentLineText).width;
+
+    // 3. テキストエリアのスタイルを取得 (padding, border)
+    const style = window.getComputedStyle(textarea);
+    const paddingLeft = parseFloat(style.paddingLeft) || 0;
+    const paddingTop = parseFloat(style.paddingTop) || 0;
+    const borderLeft = parseFloat(style.borderLeftWidth) || 0;
+    const borderTop = parseFloat(style.borderTopWidth) || 0;
+    
+    // 4. 座標計算
+    // Y座標 = 行数×高さ + 上余白 + 上枠線 - スクロール量
+    const y = (row * 16) + paddingTop + borderTop - textarea.scrollTop;
+    
+    // X座標 = 文字幅 + 左余白 + 左枠線 - スクロール量
+    const x = textWidth + paddingLeft + borderLeft - textarea.scrollLeft;
+    
+    return { x, y, row, col: currentLineText.length };
+};
+
+// --- Action: サジェストの更新 (Debounce付き) ---
+const updateGhostSuggestion = debounce(async (textarea: HTMLTextAreaElement) => {
+    if (!paint.sourceImage.value || !ai.isReady.value) return;
+    
+    const caretIdx = textarea.selectionStart;
+    if (caretIdx !== textarea.selectionEnd) {
+        isGhostVisible.value = false; // 範囲選択中は無効
+        return;
+    }
+
+    const pos = getCaretPixelPos(textarea, project.aaOutput.value, caretIdx);
+    if (!pos) return;
+
+    // 画面外チェック (簡易)
+    if (pos.y > paint.canvasDims.value.height) {
+        isGhostVisible.value = false;
+        return;
+    }
+
+    // AIに問い合わせ
+    const suggestion = await ai.getSuggestion(
+        canvasRef.value!, 
+        paint.paintBuffer.value, 
+        paint.imgTransform.value, 
+        pos.x, 
+        pos.y + 16/2 // 行の中心Y座標を渡す
+    );
+
+    if (suggestion && suggestion.length > 0) {
+        ghostText.value = suggestion;
+        ghostPos.value = { x: pos.x, y: pos.y };
+        isGhostVisible.value = true;
+    } else {
+        isGhostVisible.value = false;
+    }
+}, 150); // 150ms待ってから推論
+
+// --- Event Handlers ---
+
+// カーソル移動や入力時に呼ばれる
+const onTextCursorMove = (e: Event) => {
+    const target = e.target as HTMLTextAreaElement;
+    if (!target) return;
+    
+    // キャレット位置が変わったか確認
+    if (target.selectionStart === lastCaretIndex.value) return;
+    lastCaretIndex.value = target.selectionStart;
+
+    // ゴーストを一旦消して、再計算予約
+    isGhostVisible.value = false;
+    updateGhostSuggestion(target);
+};
+
+// キー入力ハンドリング
+const onTextKeyDown = async (e: KeyboardEvent) => {
+    // Tabキー: いかなる場合もフォーカス移動を防ぐ
+    if (e.key === 'Tab') {
+        e.preventDefault(); 
+
+        // ゴーストが表示されていれば確定する
+        if (isGhostVisible.value) {
+            const char = ghostText.value;
+            
+            if (workspaceRef.value) {
+                // 1. 文字を挿入
+                workspaceRef.value.insertAtCursor(char, activeEditor.value || 'text');
+                
+                // 2. 一旦ゴーストを消す
+                isGhostVisible.value = false;
+                
+                // 3. ★重要: DOM更新（カーソル移動）が完了するのを待つ
+                await nextTick();
+
+                // 4. 新しい位置で次のサジェストを即座にリクエスト
+                const ta = (activeEditor.value === 'text' 
+                    ? (workspaceRef.value as any).textTextareaRef 
+                    : (workspaceRef.value as any).traceTextareaRef) as HTMLTextAreaElement;
+                
+                if (ta) {
+                    // Debounceされているため、ここで呼んでも少し待ってから実行されます。
+                    // もし連打したい場合は、debounce無しの関数を別途用意する必要がありますが、
+                    // まずはこの修正で挙動を確認してください。
+                    updateGhostSuggestion(ta);
+                }
+            }
+        }
+        return;
+    }
+    
+    // 他のキー入力があったらゴーストを消す（Shift等は除く）
+    if (isGhostVisible.value && !['Shift', 'Control', 'Alt'].includes(e.key)) {
+        isGhostVisible.value = false;
+    }
+};
+
 // Watchers
 watch(aaOutput, () => {
-    // テキスト変更時にハイライト更新 (debounce推奨だが今回は直接呼ぶ)
+    // テキスト変更時にハイライト更新
     if (ai.config.value.safeMode) {
         project.updateSyntaxHighlight(true);
     }
@@ -436,9 +607,15 @@ watch(aaOutput, () => {
     />
 
     <div class="workspace">
-<AaWorkspace ref="workspaceRef"
+      <AaWorkspace ref="workspaceRef"
         v-model:aa-output="aaOutput"
         v-model:current-aa-title="projectAAs[currentAAIndex]!.title"
+        
+        :is-painting-active="sidebarTab === 'image'"
+        @click-text="onTextCursorMove"
+        @keyup-text="onTextCursorMove"
+        
+        @keydown-text="onTextKeyDown"
         v-model:trace-pane-ratio="tracePaneRatio"
         :view-mode="viewMode" :split-direction="splitDirection" :is-layout-swapped="isLayoutSwapped"
         :source-image="paint.sourceImage.value" :canvas-dims="paint.canvasDims.value" :trace-opacity="traceOpacity"
@@ -447,8 +624,7 @@ watch(aaOutput, () => {
         :is-box-selecting="isBoxSelecting" :box-selection-rects="boxSelectionRects"
         :is-ghost-visible="isGhostVisible" :ghost-pos="ghostPos" :ghost-text="ghostText"
         :aa-text-color="aaTextColor" 
-        :highlighted-h-t-m-l="highlightedHTML" 
-        :is-painting-active="sidebarTab === 'image'"
+        :highlighted-h-t-m-l="project.highlightedHTML.value" 
         @active-editor="val => activeEditor = val"
         @mousedown-canvas="onMouseDownCanvas"
         @input-text="e => { project.recordCharHistory((e as any).data); }"
@@ -463,7 +639,7 @@ watch(aaOutput, () => {
         
         <PalettePanel v-show="sidebarTab==='palette'"
           :history-chars="historyChars" :project-a-as="projectAAs" :current-a-a-index="currentAAIndex" :categories="categories"
-          @add-char="addCharWrapper"
+          @add-char="addCharWrapper" 
           @select-aa="idx => { currentAAIndex = idx; }" 
           @delete-aa="deletePage" 
           @add-new-aa="addNewPage"
@@ -478,17 +654,17 @@ watch(aaOutput, () => {
           :target-char-blue="ai.targetCharBlue.value" :target-char-red="ai.targetCharRed.value"
           :thinning-level="lineArt.thinningLevel.value" :noise-gate="ai.config.value.noiseGate" :generation-mode="ai.config.value.generationMode"
           @load-image="onImageLoaded" @extract-lineart="extractLineArtWrapper"
-          @apply-lineart="renderAllCanvases" @reset-lineart="() => { lineArt.rawLineArtCanvas.value=null; renderAllCanvases(); }"
+          @reset-lineart="() => { lineArt.rawLineArtCanvas.value=null; renderAllCanvases(); }"
           @process-image="processImageWrapper"
           @update:img-transform="val => { paint.imgTransform.value = val; updateImageTransformWrapper(); }"
-          @update:paint-mode="val => paint.paintMode.value = val"
-          @update:paint-color="val => paint.paintColor.value = val"
+          @update:paint-mode="val => paint.paintMode.value = val as any"
+          @update:paint-color="val => paint.paintColor.value = val as any"
           @update:brush-size="val => paint.brushSize.value = val"
           @update:trace-opacity="val => traceOpacity = val"
           @update:line-art-settings="val => lineArt.lineArtSettings.value = val"
           @update:thinning-level="val => lineArt.thinningLevel.value = val"
           @update:noise-gate="val => ai.config.value.noiseGate = val"
-          @update:generation-mode="val => ai.config.value.generationMode = val"
+          @update:generation-mode="val => ai.config.value.generationMode = val as any"
         />
       </aside>
     </div>
@@ -512,7 +688,7 @@ watch(aaOutput, () => {
       @copy="mode => project.triggerCopy(mode as any)"
       @show-export="showExportModal = true"
       @apply-edit="val => project.applyTextEdit(val, ai.customFontName.value)"
-      @paste-box="() => {}"
+      @paste-box="() => project.applyTextEdit('paste-box', ai.customFontName.value)"
       
       @toggle-layout="toggleLayoutWrapper"
       @swap-panes="isLayoutSwapped = !isLayoutSwapped"
@@ -594,7 +770,7 @@ watch(aaOutput, () => {
                                 class="char-select-btn" :class="{ active: ai.config.value.allowedChars.includes(c) }"
                                 @click="ai.toggleAllowedChar(c)">{{ c }}</button>
                     </div>
-                    <textarea v-model="ai.config.value.allowedChars" @change="ai.updateAllowedChars" class="config-textarea" style="height:60px; margin-top:10px;"></textarea>
+                    <textarea v-model="ai.config.value.allowedChars" @change="onConfigUpdate" class="config-textarea" style="height:60px; margin-top:10px;"></textarea>
                 </div>
 
                 <div class="config-section">
@@ -631,6 +807,7 @@ watch(aaOutput, () => {
     <input id="fileInput" type="file" hidden @change="project.onLoadFile(($event.target as HTMLInputElement).files![0]!)" accept=".txt,.mlt,.ast">
   </div>
 </template>
+
 <style>
 @font-face {
     font-family: 'MSP_Parallel';
@@ -676,54 +853,13 @@ button { border:none; background:transparent; cursor:pointer; font-family:inheri
 .desc { font-size: 0.7rem; color: #999; margin: 5px 0 0 0; }
 .aa-canvas-wrapper { flex: 1; position: relative; overflow: auto; background: #fff; padding: 0; }
 .canvas-scroll-area { position: relative; min-width: 100%; min-height: 100%; }
-.aa-textarea { position: absolute; top:0; left:0; width: 100%; height: 100%; padding: 0 0 0 16px; border: none; resize: none; outline: none; background: transparent; font-family: var(--font-aa), 'MS PGothic', 'Mona', monospace; font-size: 16px; line-height: 16px; color: var(--aa-text-color); white-space: pre; overflow: hidden; z-index: 2; font-feature-settings: "palt" 0, "kern" 0; -webkit-font-smoothing: antialiased; -moz-osx-font-smoothing: grayscale; text-rendering: geometricPrecision; }
-/* Highlight Layer */
-.aa-highlight-layer {
-    position: absolute;
-    top: 0; left: 0;
-    width: 100%; height: 100%;
-    padding: 0 0 0 16px;
-    font-family: var(--font-aa), 'MS PGothic', 'Mona', monospace;
-    font-size: 16px;
-    line-height: 16px;
-    white-space: pre;
-    color: transparent;
-    pointer-events: none;
-    z-index: 1;
-}
-.err-lead { background-color: rgba(255, 0, 0, 0.2); }
-.err-seq { background-color: rgba(255, 200, 0, 0.3); }
-.anchor-highlight { background-color: rgba(0, 100, 255, 0.15); }
-/* Box Selection Overlay */
-.box-selection-overlay {
-    position: absolute;
-    background-color: rgba(0, 100, 255, 0.2);
-    border: 1px solid rgba(0, 100, 255, 0.5);
-    pointer-events: none;
-    z-index: 5;
-}
-
-.canvas-layers { position: absolute; top:0; left:0; z-index: 0; pointer-events: none; } 
-.layer-base { position: absolute; top:0; left:0; } .layer-mask { position: absolute; top:0; left:0; }
 .card-header { flex: 0 0 28px; padding: 0 10px; background: #f9f9f9; font-size: 0.7rem; font-weight: bold; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 .resize-handle { flex: 0 0 8px; display: flex; align-items: center; justify-content: center; cursor: row-resize; background: #f9f9f9; border-top:1px solid #ddd; border-bottom:1px solid #ddd; z-index:10; }
 .resize-handle.handle-v { flex: 0 0 8px; cursor: col-resize; border-top: none; border-bottom: none; border-left: 1px solid #ddd; border-right: 1px solid #ddd; flex-direction: column; }
 .resize-handle.handle-v .handle-bar { width: 3px; height: 30px; }
 
 .handle-bar { width: 30px; height: 3px; background: #ccc; border-radius: 2px; }
-.collapse-btn { width: 100%; height: 100%; background: transparent; border: none; font-size: 0.6rem; color: #888; cursor: pointer; display: flex; align-items: center; justify-content: center; font-weight: bold; letter-spacing: 1px; }
-.floating-toolbar { position: absolute; bottom: 15px; right: 15px; background: #fff; padding: 4px 8px; border-radius: 20px; border: 1px solid #ddd; display: flex; gap: 5px; z-index: 20; box-shadow:0 2px 10px rgba(0,0,0,0.1); }
-.tool-btn { width: 28px; height: 28px; border-radius: 50%; font-size: 1rem; display: flex; align-items: center; justify-content: center; } .tool-btn.active { background: #eee; border: 1px solid #ccc; }
 .panel-box { display: flex; flex-direction: column; overflow: hidden; height: 100%; } .panel-header { padding: 8px; background: #f5f5f5; font-size: 0.75rem; font-weight: bold; display:flex; justify-content:space-between; align-items:center; }
-.grid-area { flex: 1; padding: 5px; overflow-y: auto; } .char-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(28px, 1fr)); gap: 2px; }
-.key { height: 32px; display: flex; align-items: center; justify-content: center; background: #fff; border: 1px solid #eee; cursor: pointer; } .key:hover { background: #f9f9f9; color: var(--accent-primary); border-color: var(--accent-primary); }
-.studio-modal { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: #e6e6e6; z-index: 200; display: flex; align-items: center; justify-content: center; padding: 20px; }
-.studio-content { width: 100%; height: 100%; background: #fff; border-radius: 8px; box-shadow: 0 10px 40px rgba(0,0,0,0.2); display: flex; flex-direction: column; overflow: hidden; }
-.studio-header { flex: 0 0 50px; padding: 0 15px; border-bottom: 1px solid #eee; display: flex; align-items: center; justify-content: space-between; }
-.studio-body { flex: 1; display: flex; flex-direction: column; background: #888; }
-.paint-toolbar { flex: 0 0 40px; background: #333; color: #eee; display: flex; align-items: center; padding: 0 15px; gap: 15px; font-size: 0.8rem; }
-.paint-canvas-area { flex: 1; overflow: auto; background: #999; display: block; position: relative; }
-.canvas-stack { position: relative; background: white; box-shadow: 0 0 20px rgba(0,0,0,0.5); }
 .studio-btn { padding: 6px 12px; border-radius: 6px; font-weight: bold; font-size: 0.85rem; cursor: pointer; }
 .studio-btn.primary { background: var(--accent-primary); color: #fff; border:none; }
 .studio-btn.outline { border: 1px solid #ccc; background: #fff; color: #333; }
@@ -734,7 +870,6 @@ button { border:none; background:transparent; cursor:pointer; font-family:inheri
 .ghost-layer { position: absolute; top: 0; left: 0; pointer-events: none; z-index: 5; }
 .ghost-text { position: absolute; font-family: var(--font-aa), 'MS PGothic', 'Mona', monospace; font-size: 16px; line-height: 16px; color: rgba(0, 0, 0, 0.3); white-space: pre; pointer-events: none; background: rgba(255, 255, 0, 0.2); }
 .app-root[style*="--aa-text-color: #ffffff"] .ghost-text { color: rgba(255, 255, 255, 0.4); }
-.aa-mirror { position: absolute; top: -9999px; left: -9999px; visibility: hidden; white-space: pre; font-family: var(--font-aa), 'MS PGothic', 'Mona', monospace; font-size: 16px; line-height: 16px; padding: 0 0 0 16px; border: none; }
 .grid-overlay { position: fixed; top:0; left:0; width:100%; height: calc(100vh - 32px); background: rgba(253, 251, 247, 0.95); backdrop-filter: blur(5px); z-index: 30; padding: 40px; display: grid; grid-template-columns: repeat(auto-fill, minmax(200px, 1fr)); gap: 20px; grid-auto-rows: 150px; overflow-y: auto; opacity: 0; pointer-events: none; transition: 0.3s; }
 .grid-overlay.active { opacity: 1; pointer-events: auto; }
 .thumb-card { background: #fff; border: 1px solid rgba(0,0,0,0.1); border-radius: 12px; cursor: pointer; transition: 0.2s; padding: 10px; position: relative; overflow: hidden; display: flex; flex-direction: column; }
@@ -752,9 +887,6 @@ button { border:none; background:transparent; cursor:pointer; font-family:inheri
 .menu-item { display: block; padding: 8px 15px; text-align: left; font-size: 0.85rem; cursor: pointer; color: #333; background: none; border: none; width: 100%; transition: 0.1s; }
 .menu-item:hover { background: #f5f5f5; color: var(--accent-primary); }
 .menu-label { padding: 4px 10px; font-size: 0.7rem; font-weight: bold; color: #999; background: #f9f9f9; }
-.btn-accent { background: var(--text-main); color: #fff; box-shadow: 0 4px 12px rgba(0,0,0,0.1); }
-.btn-accent:hover { background: #443d38; transform: translateY(-1px); }
-.brand { font-weight: bold; }
 .config-textarea { width: 100%; height: 100px; border: 1px solid #ccc; border-radius: 4px; padding: 5px; font-family: monospace; font-size: 0.8rem; resize: vertical; }
 .check-row { display: flex; align-items: center; margin-bottom: 10px; cursor: pointer; }
 .check-row input { margin-right: 8px; }
@@ -783,14 +915,8 @@ button { border:none; background:transparent; cursor:pointer; font-family:inheri
 .icon-btn.tiny:hover { color:#333; background:none; }
 
 /* Palette Editor Styles */
-.palette-container { 
-    display: flex; 
-    flex-direction: column; 
-    height: 100%; 
-    gap: 0; 
-    overflow: hidden; /* ★追加 */
-}
-.history-section { min-height: 0; display: flex; flex-direction: column; } /* flex basis sets height */
+.palette-container { display: flex; flex-direction: column; height: 100%; gap: 0; overflow: hidden; }
+.history-section { min-height: 0; display: flex; flex-direction: column; }
 .library-section { min-height: 0; display: flex; flex-direction: column; }
 .project-list-section { flex: 0 0 180px; display: flex; flex-direction: column; overflow: hidden; }
 .history-bg { background-color: #fffbf5; }
@@ -889,7 +1015,6 @@ textarea.aa-textarea.box-mode-active::selection {
 .box-selection-line {
     position: absolute;
     background-color: rgba(0, 100, 255, 0.2);
-    /* border: 1px solid rgba(0, 100, 255, 0.3); ボーダーがあると重なって濃くなるので好みで */
 }
 
 .radio-label {
@@ -965,49 +1090,6 @@ textarea.aa-textarea.box-mode-active::selection {
 @keyframes blink {
     0%, 100% { opacity: 1; }
     50% { opacity: 0.5; }
-}
-
-.err-char {
-    background-color: rgba(255, 0, 0, 0.2);
-    border-bottom: 2px solid red;
-    color: red !important; /* 透明テキストの上に乗るため色をつける */
-}
-/* AaWorkspace内での調整が必要な場合があります */
-.aa-highlight-layer {
-    position: absolute; top: 0; left: 0;
-    pointer-events: none;
-    font-family: 'MSP_Parallel', 'Saitamaar', sans-serif; /* textareaと同じフォント */
-    font-size: 16px; /* textareaと同じサイズ */
-    line-height: 18px; /* textareaと同じ行間（CSSで調整が必要かも） */
-    color: transparent; /* 基本文字は透明 */
-    white-space: pre;
-    width: 100%; height: 100%;
-    z-index: 5;
-    /* textareaのpaddingと合わせる */
-    padding: 2px; 
-}
-.aa-textarea {
-    z-index: 10;
-    background: transparent; /* 背景透明にしてハイライトを透かす */
-}
-
-/* Highlight Styles */
-.err-char {
-    background-color: rgba(255, 0, 0, 0.2);
-    border-bottom: 2px solid red;
-}
-.err-lead {
-    background-color: rgba(255, 165, 0, 0.3); /* オレンジ */
-    border-bottom: 2px solid orange;
-}
-.err-seq {
-    background-color: rgba(255, 165, 0, 0.3); /* オレンジ */
-    border-bottom: 2px dotted orange;
-}
-.anchor-highlight {
-    color: #0000EE !important; /* リンク色 */
-    font-weight: bold;
-    border-bottom: 1px solid #0000EE;
 }
 
 </style>

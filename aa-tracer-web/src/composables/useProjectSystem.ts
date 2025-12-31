@@ -165,6 +165,7 @@ export function useProjectSystem() {
     };
     const applyTextEdit = (type: string, customFontName: string) => {
         // ... (前のコードと同じ) ...
+        console.log(customFontName);
         // 簡易実装:
         commitHistory();
         const text = aaOutput.value;
@@ -193,7 +194,7 @@ export function useProjectSystem() {
         updateSyntaxHighlight, // export
         handlePaste, // export
         applyTextEdit, triggerCopy, onSaveFile, onLoadFile, showToastMessage,
-        moveCategory: (cats: any[], idx: number, dir: number) => { /* App.vueで実装済みのため不要なら削除可 */ },
-        removeCategory: (cats: any[], id: string) => { /* 同上 */ }
+        moveCategory: (cats: any[], idx: number, dir: number) => { console.log(cats, idx, dir) },
+        removeCategory: (cats: any[], id: string) => { console.log(cats, id) }
     };
 }
