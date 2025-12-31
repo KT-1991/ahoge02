@@ -1,6 +1,6 @@
 import * as ort from 'onnxruntime-web';
 
-//const BASE_URL = import.meta.env.BASE_URL;
+const BASE_URL = import.meta.env.BASE_URL;
 
 export class LineArtProcessor {
     private session: ort.InferenceSession | null = null;
@@ -9,16 +9,17 @@ export class LineArtProcessor {
     // AIに入力する固定サイズ (Anime2Sketchは512以上でも動きますが、1024が画質と速度のバランスが良いです)
     // ※必ず 32 や 64 の倍数であること。
     private readonly MODEL_INPUT_SIZE = 1024; 
+    
 
-    async init(modelName: string = 'anime2sketch.onnx') {
+    async init() {
         if (this.isLoaded) return;
 
         //const modelPath = BASE_URL === '/' ? `/${modelName}` : `${BASE_URL}${modelName}`;
-        const modelPath = modelName;
-        console.log(`[LineArt] Loading model from: ${modelPath}`);
+        const modelBuffer = await this.loadSplitModel('anime2sketch', 5);
+        //console.log(`[LineArt] Loading model from: ${modelPath}`);
 
         try {
-            this.session = await ort.InferenceSession.create(modelPath, {
+            this.session = await ort.InferenceSession.create(modelBuffer, {
                 executionProviders: ['wasm'], 
                 graphOptimizationLevel: 'all'
             });
@@ -149,4 +150,47 @@ export class LineArtProcessor {
         
         return finalCanvas;
     }
+    
+    async loadSplitModel(baseName: string, partCount: number): Promise<Uint8Array> {
+        const promises: Promise<ArrayBuffer>[] = [];
+        
+        // ベースパス調整 (Viteの場合、public直下は '/' でアクセス)
+        // 開発環境と本番環境でパスがズレないように import.meta.env.BASE_URL を考慮しても良いですが、
+        // まずはシンプルにルート相対パスで指定します。
+        const modelPath = BASE_URL === '/' ? `/${baseName}` : `${BASE_URL}${baseName}`;
+        
+        for (let i = 0; i < partCount; i++) {
+            // ★修正: リネームしたファイル名に合わせる (.bin)
+            // 例: /anime2sketch_part0.bin
+            //const url = `/${baseName}_part${i}.bin`;
+            const url = `${modelPath}_part${i}.bin`;
+            
+            console.log(`Requesting: ${url}`); // デバッグログ
+
+            const p = fetch(url).then(async res => {
+                if (!res.ok) {
+                    // ここで404が出ている場合、URLか配置場所が間違っています
+                    throw new Error(`File not found: ${url} (Status: ${res.status})`);
+                }
+                return res.arrayBuffer();
+            });
+            promises.push(p);
+        }
+        
+        const chunks = await Promise.all(promises);
+        
+        // 結合処理
+        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.byteLength, 0);
+        console.log(`Total size: ${(totalLength / 1024 / 1024).toFixed(2)} MB`);
+
+        const combinedBuffer = new Uint8Array(totalLength);
+        let offset = 0;
+        for (const chunk of chunks) {
+            combinedBuffer.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+        }
+        
+        return combinedBuffer;
+    }
+
 }
