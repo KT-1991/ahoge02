@@ -1,6 +1,6 @@
 import * as ort from 'onnxruntime-web';
 
-const BASE_URL = import.meta.env.BASE_URL;
+//const BASE_URL = import.meta.env.BASE_URL;
 
 export class LineArtProcessor {
     private session: ort.InferenceSession | null = null;
@@ -13,7 +13,8 @@ export class LineArtProcessor {
     async init(modelName: string = 'anime2sketch.onnx') {
         if (this.isLoaded) return;
 
-        const modelPath = BASE_URL === '/' ? `/${modelName}` : `${BASE_URL}${modelName}`;
+        //const modelPath = BASE_URL === '/' ? `/${modelName}` : `${BASE_URL}${modelName}`;
+        const modelPath = modelName;
         console.log(`[LineArt] Loading model from: ${modelPath}`);
 
         try {

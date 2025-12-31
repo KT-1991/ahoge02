@@ -17,12 +17,49 @@ export function useLineArt() {
     });
     const thinningLevel = ref(0);
 
+    // ★追加: 分割ファイルを結合してURLを生成する関数
+    async function loadSplitModel(baseUrl: string, partCount: number): Promise<string> {
+        //const buffers: ArrayBuffer[] = [];
+        
+        // 1. 全パートを並列ダウンロード
+        const promises = [];
+        for (let i = 0; i < partCount; i++) {
+            const url = `${baseUrl}.part${i}`;
+            promises.push(fetch(url).then(res => res.arrayBuffer()));
+        }
+        
+        const chunks = await Promise.all(promises);
+        
+        // 2. 合計サイズを計算
+        const totalLength = chunks.reduce((acc, chunk) => acc + chunk.byteLength, 0);
+        
+        // 3. 結合用の大きなバッファを作成
+        const combinedBuffer = new Uint8Array(totalLength);
+        
+        // 4. データを書き込む
+        let offset = 0;
+        for (const chunk of chunks) {
+            combinedBuffer.set(new Uint8Array(chunk), offset);
+            offset += chunk.byteLength;
+        }
+        
+        // 5. Blobを作成し、そのURLを返す
+        // ONNX Runtime Web は URL 文字列を受け取れる
+        const blob = new Blob([combinedBuffer], { type: 'application/octet-stream' });
+        return URL.createObjectURL(blob);
+    }
+
+
+
     // --- Actions ---
     
     // 1. AIによる線画抽出 (anime2sketch)
     const extractLineArt = async (sourceImage: HTMLImageElement) => {
         try {
-            await lineArtProcessor.init('anime2sketch.onnx'); 
+            const modelUrl = await loadSplitModel('/anime2sketch.onnx', 5);
+            console.log(modelUrl)
+            await lineArtProcessor.init(modelUrl); 
+            //await lineArtProcessor.init('anime2sketch.onnx'); 
             const result = await lineArtProcessor.process(sourceImage);
             rawLineArtCanvas.value = result;
             
@@ -37,6 +74,7 @@ export function useLineArt() {
             return false;
         }
     };
+
 
     // 2. 線の太さ調整 (OpenCV Erode/Dilate)
     const applyLineArtSettings = (sourceImage: HTMLImageElement | null) => {
