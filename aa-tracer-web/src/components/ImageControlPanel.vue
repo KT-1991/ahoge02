@@ -1,5 +1,9 @@
 <script setup lang="ts">
 
+import { useI18n } from '../composables/useI18n'; // ★追加
+
+const { t } = useI18n(); // ★使用開始
+
 const props = defineProps<{
   sourceImage: HTMLImageElement | null;
   isProcessing: boolean;
@@ -50,36 +54,36 @@ const onLoadFile = (e: Event) => {
   <div class="image-control-panel">
     
     <div class="panel-section">
-      <h3>📁 Source Image</h3>
+      <h3>{{ t('img_source_image') }}</h3>
       <div class="control-row">
         <label class="studio-btn primary w-100">
-          Load Image
+          {{ t('img_load_btn') }}
           <input type="file" @change="onLoadFile" accept="image/*" hidden>
         </label>
       </div>
       
       <div class="control-row" v-if="sourceImage">
         <button class="studio-btn outline w-100" @click="$emit('extract-lineart')" :disabled="isExtracting">
-            ⚡ Extract Line Art (AI)
+            {{ t('img_extract_btn') }}
         </button>
       </div>
     </div>
 
     <div class="panel-section" v-if="rawLineArtCanvas">
-        <h3>Adjust Lines</h3>
+        <h3>{{ t('img_adjust_lines') }}</h3>
         <div class="control-group">
-            <label>Threshold</label>
+            <label>{{ t('img_threshold') }}</label>
             <input type="range" min="0" max="255" :value="lineArtSettings.threshold" @input="$emit('update:line-art-settings', { ...lineArtSettings, threshold: +($event.target as HTMLInputElement).value })">
         </div>
         <div class="control-group" v-if="lineArtSettings.thickness !== undefined">
-            <label>Thickness</label>
+            <label>{{ t('img_thickness') }}</label>
             <input type="range" min="-3" max="5" :value="lineArtSettings.thickness" @input="$emit('update:line-art-settings', { ...lineArtSettings, thickness: +($event.target as HTMLInputElement).value })">
         </div>
-        <button class="studio-btn small w-100" @click="$emit('reset-lineart')">Reset Adjustments</button>
+        <button class="studio-btn small w-100" @click="$emit('reset-lineart')">{{ t('img_reset_btn') }}</button>
     </div>
 
     <div class="panel-section">
-        <h3>🖌 Paint & Transform</h3>
+        <h3>{{ t('img_paint_transform') }}</h3>
         <div class="paint-tools">
             <button :class="{ active: paintMode === 'move' }" @click="$emit('update:paint-mode', 'move')" title="Move/Scale Image">✋</button>
             <button :class="{ active: paintMode === 'brush' }" @click="$emit('update:paint-mode', 'brush')" title="Brush">🖊</button>
@@ -113,10 +117,10 @@ const onLoadFile = (e: Event) => {
         <hr class="sep">
 
         <div class="control-group">
-          <label>Line Thinning: {{ thinningLevel }}</label>
+          <label>{{ t('img_thinning') }}: {{ thinningLevel }}</label>
           <input type="range" min="0" max="3" :value="thinningLevel" @input="$emit('update:thinning-level', +($event.target as HTMLInputElement).value)">
           
-          <label style="margin-top:10px;">Noise Gate: {{ noiseGate }}</label>
+          <label style="margin-top:10px;">{{ t('img_noise') }}: {{ noiseGate }}</label>
           <input type="range" min="0" max="2.0" step="0.1" :value="noiseGate" @input="$emit('update:noise-gate', +($event.target as HTMLInputElement).value)">
           
           <label class="check-row" style="margin-top:10px; font-size:0.8rem;">
@@ -128,23 +132,23 @@ const onLoadFile = (e: Event) => {
                   style="display:flex; justify-content:center; align-items:center; gap:8px; margin-top:10px;"
                   @click="$emit('process-image')" :disabled="isProcessing">
             <span v-if="isProcessing" class="spinner small"></span>
-            <span>✨ Update AA</span>
+            <span>{{ t('img_generate_btn') }}</span>
           </button>
         </div>
     </div>
 
     <div class="panel-section">
-      <h3>Appearance</h3>
+      <h3>{{ t('img_appearance') }}</h3>
       <div class="control-group">
-        <label>Trace Opacity: {{ traceOpacity }}%</label>
+        <label>{{ t('img_opacity') }}: {{ traceOpacity }}%</label>
         <input type="range" min="0" max="100" :value="traceOpacity" @input="$emit('update:trace-opacity', +($event.target as HTMLInputElement).value)">
       </div>
       <div class="control-group">
-        <label>Scale: {{ imgTransform.scale.toFixed(2) }}</label>
+        <label>{{ t('img_scale') }}: {{ imgTransform.scale.toFixed(2) }}</label>
         <input type="range" min="0.1" max="5.0" step="0.1" :value="imgTransform.scale" @input="$emit('update:img-transform', { ...imgTransform, scale: +($event.target as HTMLInputElement).value })">
       </div>
       <div class="control-group">
-        <label>Rotation: {{ imgTransform.rotation }}°</label>
+        <label>{{ t('img_rotation') }}: {{ imgTransform.rotation }}°</label>
         <input type="range" min="-180" max="180" :value="imgTransform.rotation" @input="$emit('update:img-transform', { ...imgTransform, rotation: +($event.target as HTMLInputElement).value })">
       </div>
     </div>

@@ -1,4 +1,7 @@
 <script setup lang="ts">
+import { useI18n } from '../composables/useI18n'; // ★追加
+
+const { t } = useI18n(); // ★使用開始
 // Props定義を修正 (色関連を削除)
 defineProps<{
   status: string;
@@ -17,8 +20,8 @@ const emit = defineEmits<{
 <template>
   <header class="app-header">
     <div class="header-left">
-      <h1 class="app-logo">Cozy Craft AA</h1>
-      <span class="app-version">v0.5</span>
+      <h1 class="app-logo">{{ t('app_title') }}</h1>
+      <span class="app-version">v1.0</span>
       
       <div class="status-badge" :class="{ ready: isReady, processing: isProcessing }">
         <span class="status-dot"></span>

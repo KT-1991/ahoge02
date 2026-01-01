@@ -56,9 +56,20 @@ export const translations = {
     pal_chars: { en: "Characters", ja: "登録文字" },
     
     // Image Panel
+    img_source_image: { en: "📁 Source Image", ja: "📂 元イラスト" },
     img_load_btn: { en: "📂 Load Image", ja: "📂 画像を読込" },
-    img_extract_btn: { en: "Extract Line Art", ja: "線画抽出" },
+    img_extract_btn: { en: "⚡ Extract Line Art (AI)", ja: "線画抽出" },
+    img_adjust_lines: { en: "Adjust Lines", ja: "線の調整" },
+    img_threshold: { en: "Threshold", ja: "閾値" },
+    img_thickness: { en: "Thickness", ja: "太さ" },
+    img_reset_btn: { en: "Reset Adjustments", ja: "リセット" },
+    img_paint_transform: { en: "🖌 Paint & Transform", ja: "塗りと生成条件の調整" },
+    img_thinning: { en: "Line Thinning", ja: "細線化" },
+    img_noise: { en: "Noise Gate", ja: "ノイズ除去" },
+    img_appearance: { en: "Appearance", ja: "調整" },
     img_opacity: { en: "Trace Opacity", ja: "不透明度" },
+    img_scale: { en: "Scale", ja: "拡大率" },
+    img_rotation: { en: "Rotation", ja: "回転" },
     img_generate_btn: { en: "✨ Generate AA", ja: "✨ AA生成" },
     
     // Config Modal
@@ -70,7 +81,8 @@ export const translations = {
     cfg_safe_mode: { en: "Safe Mode (Web Safe Fonts)", ja: "セーフモード (標準フォント)" },
     cfg_thin_space: { en: "Use Thin Space (&thinsp;)", ja: "Thin Space (&thinsp;) を使用" },
     cfg_bbs_mode: { en: "BBS Compatibility Mode", ja: "BBS互換モード (ハイライト)" },
-    cfg_reset_btn: { en: "🔄 Reset to Default", ja: "🔄 設定を初期化" },
+    cfg_reset_title: { en: "Reset Settings", ja: "設定初期化" },
+    cfg_reset_btn: { en: "🔄 Reset Font & Characters to Default", ja: "🔄 フォント・使用文字を初期化" },
 
     // Misc
     btn_close: { en: "Close", ja: "閉じる" },

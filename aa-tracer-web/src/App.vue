@@ -860,36 +860,36 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
 
     <div class="modal-backdrop" v-if="showConfigModal" @click.self="showConfigModal = false">
         <div class="modal-window config-window">
-            <div class="studio-header"><h2>⚙️ Configuration</h2><button class="close-btn" @click="showConfigModal = false">✕</button></div>
+            <div class="studio-header"><h2>{{ t('cfg_title') }}</h2><button class="close-btn" @click="showConfigModal = false">✕</button></div>
             <div class="settings-pane">
                 <div class="config-section">
                     <h3>{{ t('cfg_lang') }}</h3>
                     <div class="btn-group">
-                        <button :class="{ active: currentLang === 'ja' }" @click="currentLang = 'ja'">🇯🇵 日本語</button>
-                        <button :class="{ active: currentLang === 'en' }" @click="currentLang = 'en'">🇺🇸 English</button>
+                        <button class="studio-btn outline" :class="{ active: currentLang === 'ja' }" @click="currentLang = 'ja'">🇯🇵 日本語</button>
+                        <button class="studio-btn outline" :class="{ active: currentLang === 'en' }" @click="currentLang = 'en'">🇺🇸 English</button>
                     </div>
                 </div>
-                <div class="config-section"><h3>Allowed Characters</h3><textarea v-model="ai.config.value.allowedChars" @change="onConfigUpdate" class="config-textarea" style="height:60px;"></textarea></div>
+                <div class="config-section"><h3>{{ t('cfg_allowed') }}</h3><textarea v-model="ai.config.value.allowedChars" @change="onConfigUpdate" class="config-textarea" style="height:60px;"></textarea></div>
                 <div class="config-section">
-                    <h3>Font Settings</h3>
+                    <h3>{{ t('cfg_font') }}</h3>
                     <div class="control-row"><span class="control-label">Current: <b>{{ ai.customFontName.value }}</b></span><label class="studio-btn outline small">Change<input type="file" @change="onFontFileChange" accept=".ttf" hidden></label></div>
                 </div>
                 <div class="config-section">
-                    <h3>Advanced</h3>
-                    <label class="check-row"><input type="checkbox" v-model="ai.config.value.safeMode" @change="toggleSafeMode"><span>Safe Mode (Web Safe Fonts)</span></label>
-                    <label class="check-row"><input type="checkbox" v-model="ai.config.value.useThinSpace"><span>Use Thin Space for Nudge (&thinsp;)</span></label>
+                    <h3>{{ t('cfg_advanced') }}</h3>
+                    <label class="check-row"><input type="checkbox" v-model="ai.config.value.safeMode" @change="toggleSafeMode"><span>{{ t('cfg_safe_mode') }}</span></label>
+                    <label class="check-row"><input type="checkbox" v-model="ai.config.value.useThinSpace"><span>{{ t('cfg_thin_space') }}</span></label>
                     
                     <label class="check-row">
                         <input type="checkbox" v-model="ai.config.value.bbsMode">
-                        <span>BBS Compatibility Mode (Highlight Spaces)</span>
+                        <span>{{ t('cfg_bbs_mode') }}</span>
                     </label>
                     <p class="config-desc">Highlights leading spaces, consecutive spaces, and anchors.</p>
                 </div>
             </div>
             <div class="config-section">
-              <h3>Reset Settings</h3>
+              <h3>{{ t('cfg_reset_title') }}</h3>
               <button class="studio-btn outline w-100" @click="handleResetAiConfig">
-                  🔄 Reset Font & Characters to Default
+                  {{ t('cfg_reset_btn') }}
               </button>
           </div>
         </div>
@@ -901,7 +901,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
       <div v-if="!ai.isReady.value" class="splash-overlay">
         <div class="splash-content">
           <div class="loading-spinner"></div>
-          <h2 class="splash-title">Cozy Craft AA</h2>
+          <h2 class="splash-title">{{ t('app_title') }}</h2>
           <div class="splash-status">
             <span class="status-icon">⚙️</span>
             <span>{{ ai.status.value }}</span>
