@@ -17,6 +17,16 @@ import AaReferenceWindow from './components/AaReferenceWindow.vue';
 import AaExportModal from './components/AaExportModal.vue';
 import AaTimelapseModal from './components/AaTimelapseModal.vue';
 
+import { useI18n } from './composables/useI18n'; // ★追加
+import AaHelpModal from './components/AaHelpModal.vue'; // ★インポート
+
+const showHelpModal = ref(false); // ★状態追加
+
+const { t, currentLang } = useI18n(); // ★使用開始
+
+// セッション保存キー
+const SESSION_KEY = 'aa_editor_session_v1';
+
 // --- Composables ---
 const project = useProjectSystem();
 const paint = useCanvasPaint();
@@ -84,6 +94,121 @@ const fontStack = computed(() => ai.customFontName.value === 'Saitamaar' ? `'MSP
 
 // --- Methods ---
 
+// ★状態を保存する関数
+const saveSession = () => {
+    if (!paint.canvasDims.value) return;
+
+    // 画像データのBase64化
+    let imgDataUrl = '';
+    if (paint.sourceImage.value) {
+        // 現在の画像をキャンバスに描画してDataURLを取得
+        const tempCvs = document.createElement('canvas');
+        tempCvs.width = paint.sourceImage.value.width;
+        tempCvs.height = paint.sourceImage.value.height;
+        const ctx = tempCvs.getContext('2d')!;
+        ctx.drawImage(paint.sourceImage.value, 0, 0);
+        imgDataUrl = tempCvs.toDataURL('image/png');
+    }
+
+    const sessionData = {
+        // プロジェクトデータ
+        projectAAs: project.projectAAs.value,
+        currentAAIndex: project.currentAAIndex.value,
+        
+        // 画像の状態
+        imgDataUrl: imgDataUrl,
+        imgTransform: paint.imgTransform.value,
+        
+        // パレット (LocalStorage 'aa_palette_v1' にも保存されているが、念のため)
+        categories: categories.value,
+        
+        // AI設定
+        fontName: ai.customFontName.value,
+        allowedChars: ai.config.value.allowedChars,
+        // (注: カスタムフォントファイル自体はLocalStorage容量制限(約5MB)のため保存が困難です。
+        //  フォント名だけ保存し、再訪時はデフォルトor再アップロードを促すのが一般的です)
+        
+        // UI状態
+        aaTextColor: aaTextColor.value,
+        subTextColor: subTextColor.value,
+        traceOpacity: traceOpacity.value,
+        // ★追加: 言語設定
+        lang: currentLang.value
+    };
+
+    try {
+        localStorage.setItem(SESSION_KEY, JSON.stringify(sessionData));
+        // project.showToastMessage('Session Auto-Saved'); // 頻繁に出るとうざいのでコメントアウト
+    } catch (e) {
+        console.warn('Session save failed (likely quota exceeded):', e);
+    }
+};
+
+// ★状態を復元する関数
+const loadSession = async () => {
+    const saved = localStorage.getItem(SESSION_KEY);
+    if (!saved) return false;
+
+    try {
+        const data = JSON.parse(saved);
+
+        // 1. テキスト復元
+        if (data.projectAAs) project.projectAAs.value = data.projectAAs;
+        if (typeof data.currentAAIndex === 'number') project.currentAAIndex.value = data.currentAAIndex;
+
+        // 2. パレット復元
+        if (data.categories) categories.value = data.categories;
+
+        // 3. AI設定復元
+        if (data.fontName) ai.customFontName.value = data.fontName;
+        if (data.allowedChars) {
+            ai.config.value.allowedChars = data.allowedChars;
+            ai.updateAllowedChars();
+        }
+
+        // 4. 色・UI復元
+        if (data.aaTextColor) aaTextColor.value = data.aaTextColor;
+        if (data.subTextColor) subTextColor.value = data.subTextColor;
+        if (data.traceOpacity) traceOpacity.value = data.traceOpacity;
+        if (data.imgTransform) paint.imgTransform.value = data.imgTransform;
+
+        // ★追加: 言語設定の復元
+        if (data.lang) currentLang.value = data.lang;
+        // 5. 画像復元 (非同期)
+        if (data.imgDataUrl) {
+            const img = new Image();
+            img.src = data.imgDataUrl;
+            img.onload = async () => {
+                paint.sourceImage.value = img;
+                paint.imageSize.value = { w: img.width, h: img.height };
+                paint.initPaintBuffer(img.width, img.height);
+                await paint.updateCanvasDimensions();
+                await nextTick();
+                renderAllCanvases();
+                project.showToastMessage('Session Restored');
+            };
+        }
+        return true;
+    } catch (e) {
+        console.error('Failed to load session', e);
+        return false;
+    }
+};
+
+// パレットインポートのハンドラ (PalettePanelからのイベント)
+const handleImportPalette = (newCategories: any[]) => {
+    categories.value = newCategories;
+    savePaletteToStorage(); // 永続化
+    project.showToastMessage('Palette Imported');
+};
+
+// リセットハンドラ (Configモーダル等から呼ぶ想定)
+const handleResetAiConfig = async () => {
+    if(!confirm("Reset Font and Allowed Characters to default?")) return;
+    await ai.resetConfig();
+    project.showToastMessage('AI Config Reset');
+};
+
 const loadPaletteFromStorage = () => {
     const saved = localStorage.getItem('aa_palette_v1');
     if (saved) { try { categories.value = JSON.parse(saved); } catch(e) {} }
@@ -118,37 +243,41 @@ onMounted(async () => {
     window.addEventListener('mouseup', onGlobalMouseUp);
     window.addEventListener('mousemove', onGlobalMouseMove);
     await ai.initEngine();
+    
+    // ★セッション復元を試みる
+    const restored = await loadSession();
 
-    // デフォルトで「白紙のキャンバス」を作成して読み込ませる
-    // これにより、画像を開かなくてもすぐにお絵描きが始められる
-    const defaultW = 800;
-    const defaultH = 600;
+    if (!restored) {
+        // 復元データがない場合はデフォルト(白紙)初期化
+        const defaultW = 800; const defaultH = 600;
+        const canvas = document.createElement('canvas');
+        canvas.width = defaultW; canvas.height = defaultH;
+        const ctx = canvas.getContext('2d')!;
+        ctx.fillStyle = 'white'; ctx.fillRect(0, 0, defaultW, defaultH);
+        const url = canvas.toDataURL();
+        const img = new Image(); img.src = url;
+        img.onload = async () => {
+            paint.sourceImage.value = img;
+            paint.imageSize.value = { w: defaultW, h: defaultH };
+            paint.initPaintBuffer(defaultW, defaultH);
+            paint.imgTransform.value = { x: 0, y: 0, scale: 1.0, rotation: 0 };
+            await paint.updateCanvasDimensions();
+            await nextTick();
+            renderAllCanvases();
+        };
+
+    }
+    // オートセーブのトリガー設定 (変更検知)
+    // 負荷軽減のため debounce をかけて保存
+    const debouncedSave = debounce(saveSession, 2000); // 2秒ごとに保存
     
-    const canvas = document.createElement('canvas');
-    canvas.width = defaultW;
-    canvas.height = defaultH;
-    const ctx = canvas.getContext('2d')!;
-    ctx.fillStyle = 'white';
-    ctx.fillRect(0, 0, defaultW, defaultH);
-    
-    const url = canvas.toDataURL();
-    const img = new Image();
-    img.src = url;
-    img.onload = async () => {
-        paint.sourceImage.value = img;
-        paint.imageSize.value = { w: defaultW, h: defaultH };
-        paint.initPaintBuffer(defaultW, defaultH);
-        
-        paint.imgTransform.value = { x: 0, y: 0, scale: 1.0, rotation: 0 };
-        await paint.updateCanvasDimensions();
-        
-        // Imageタブへ移動
-        //sidebarTab.value = 'image';
-        //paint.paintMode.value = 'flow'; // 初期ツールをFlowに
-        
-        await nextTick();
-        renderAllCanvases();
-    };
+    watch([
+        project.aaOutput, 
+        paint.imgTransform, 
+        aaTextColor, 
+        ai.config.value,
+        currentLang // ★追加: 言語が変わった時も保存
+    ], () => debouncedSave(), { deep: true });
 });
 
 onUnmounted(() => {
@@ -504,9 +633,18 @@ const onTriggerCopy = async (mode: 'normal' | 'bbs') => {
 const showColorPickerModal = ref(false);
 const colorPickerTarget = ref<'main' | 'sub'>('main');
 const openColorPicker = (target: 'main' | 'sub') => { colorPickerTarget.value = target; showColorPickerModal.value = true; };
-const applyColorFromModal = (color: string) => {
-    if (colorPickerTarget.value === 'main') aaTextColor.value = color; else subTextColor.value = color;
-    showColorPickerModal.value = false;
+// ★修正後: 第2引数で閉じるかどうかを制御できるように変更
+const applyColorFromModal = (color: string, closeModal = true) => {
+    if (colorPickerTarget.value === 'main') {
+        aaTextColor.value = color;
+    } else {
+        subTextColor.value = color;
+    }
+    
+    // 指定された場合のみ閉じる
+    if (closeModal) {
+        showColorPickerModal.value = false;
+    }
 };
 const presetColors = ['#222222', '#000000', '#444444', '#666666', '#888888', '#aaaaaa', '#cccccc', '#ffffff', '#5c0000', '#ff0000', '#ff8888', '#ffcccc', '#00005c', '#0000ff', '#8888ff', '#ccccff', '#004400', '#008000', '#88ff88', '#ccffcc', '#4a3b32', '#8b4513', '#e6b086', '#f5deb3'];
 
@@ -565,6 +703,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
     :is-processing="ai.isProcessing.value"
     @toggle-debug="showDebugModal=true" 
     @toggle-config="showConfigModal=true"
+    @toggle-help="showHelpModal = true"
     />
 
     <div class="workspace">
@@ -580,6 +719,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                 :history-chars="historyChars" :project-a-as="projectAAs" :current-a-a-index="currentAAIndex" :categories="categories"
                 @add-char="addCharWrapper" @select-aa="idx => { currentAAIndex = idx; }" 
                 @delete-aa="deletePage" @add-new-aa="addNewPage" @show-palette-editor="showPaletteEditor=true"
+                @import-palette="handleImportPalette"
             />
 
             <ImageControlPanel v-show="sidebarTab==='image'"
@@ -602,6 +742,8 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                 @update:thinning-level="val => lineArt.thinningLevel.value = val"
                 @update:noise-gate="val => ai.config.value.noiseGate = val"
                 @update:generation-mode="val => ai.config.value.generationMode = val as any"
+                @update:target-char-blue="val => ai.targetCharBlue.value = val"
+                @update:target-char-red="val => ai.targetCharRed.value = val"
             />
         </div>
 
@@ -658,7 +800,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                     <div class="custom-color-input-group">
                         <input type="color" class="custom-picker"
                                :value="colorPickerTarget === 'main' ? aaTextColor : subTextColor" 
-                               @input="applyColorFromModal(($event.target as HTMLInputElement).value)">
+                               @input="applyColorFromModal(($event.target as HTMLInputElement).value, false)">
                         <input type="text" class="custom-hex"
                                :value="colorPickerTarget === 'main' ? aaTextColor : subTextColor"
                                readonly>
@@ -687,7 +829,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
         :font-stack="fontStack"
         @close="showTimelapseModal = false"
     />
-
+    <AaHelpModal :is-visible="showHelpModal" @close="showHelpModal = false" />
     <div class="modal-backdrop" v-if="showPaletteEditor" @click.self="showPaletteEditor = false">
         <div class="modal-window" style="width: 700px; height: 500px; display:flex; flex-direction:column;">
             <div class="studio-header"><h2>✏️ Edit Palette</h2><button class="close-btn" @click="showPaletteEditor = false">✕</button></div>
@@ -720,6 +862,13 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
         <div class="modal-window config-window">
             <div class="studio-header"><h2>⚙️ Configuration</h2><button class="close-btn" @click="showConfigModal = false">✕</button></div>
             <div class="settings-pane">
+                <div class="config-section">
+                    <h3>{{ t('cfg_lang') }}</h3>
+                    <div class="btn-group">
+                        <button :class="{ active: currentLang === 'ja' }" @click="currentLang = 'ja'">🇯🇵 日本語</button>
+                        <button :class="{ active: currentLang === 'en' }" @click="currentLang = 'en'">🇺🇸 English</button>
+                    </div>
+                </div>
                 <div class="config-section"><h3>Allowed Characters</h3><textarea v-model="ai.config.value.allowedChars" @change="onConfigUpdate" class="config-textarea" style="height:60px;"></textarea></div>
                 <div class="config-section">
                     <h3>Font Settings</h3>
@@ -737,6 +886,12 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                     <p class="config-desc">Highlights leading spaces, consecutive spaces, and anchors.</p>
                 </div>
             </div>
+            <div class="config-section">
+              <h3>Reset Settings</h3>
+              <button class="studio-btn outline w-100" @click="handleResetAiConfig">
+                  🔄 Reset Font & Characters to Default
+              </button>
+          </div>
         </div>
     </div>
 
@@ -789,7 +944,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
     --text-sub: #948c85;
     --accent-primary: #e6b086;
     --border-soft: 1px solid rgba(92, 85, 79, 0.1);
-    --font-ui: "Hiragino Maru Gothic Pro", "Rounded Mplus 1c", sans-serif;
+    --font-ui: "M PLUS Rounded 1c", "Hiragino Maru Gothic Pro", "Rounded Mplus 1c", sans-serif;
 }
 
 * { box-sizing: border-box; }

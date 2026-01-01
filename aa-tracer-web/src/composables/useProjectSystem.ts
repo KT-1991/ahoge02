@@ -1,6 +1,19 @@
 import { ref, computed, nextTick, watch } from 'vue';
 import { AaFileManager, type AaEntry, type EncodingType } from '../utils/AaFileManager';
 
+
+// ★追加: 文字列のピクセル幅を計測するヘルパー関数
+const measureWidth = (text: string, fontName: string): number => {
+    // ブラウザ環境でない場合は0を返すガード
+    if (typeof document === 'undefined') return 0;
+    
+    const canvas = document.createElement('canvas');
+    const ctx = canvas.getContext('2d')!;
+    // フォントサイズはエディタに合わせて16pxとします
+    ctx.font = `16px "${fontName}", "MS PGothic", sans-serif`;
+    return ctx.measureText(text).width;
+};
+
 export function useProjectSystem() {
     // --- State ---
     const projectAAs = ref<AaEntry[]>([ { title: 'Untitled 1', content: '' } ]);
@@ -59,7 +72,93 @@ export function useProjectSystem() {
     const onSaveFile = (format: 'AST'|'MLT', encoding: 'SJIS'|'UTF8') => { console.log(encoding); const content = format === 'MLT' ? projectAAs.value.map(a => `[AA][${a.title}]\n${a.content}\n`).join('') : aaOutput.value; const blob = new Blob([content], { type: 'text/plain;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `aa_project.${format.toLowerCase()}`; a.click(); URL.revokeObjectURL(url); showToastMessage('File Saved'); };
     const triggerCopy = async (mode: 'normal' | 'bbs') => { try { await navigator.clipboard.writeText(aaOutput.value); showToastMessage(mode === 'bbs' ? 'Copied for BBS!' : 'Copied!'); } catch (e) { showToastMessage('Copy Failed'); } };
     const handlePaste = (e: ClipboardEvent, textarea: HTMLTextAreaElement) => { console.log(e.target); nextTick(() => commitHistory()); console.log(textarea.value) };
-    const applyTextEdit = (type: string, fontName: string) => { console.log(fontName); const text = aaOutput.value; const lines = text.split('\n'); let newText = text; if (type === 'trim-end') newText = lines.map(l => l.replace(/[ 　\u2009]+$/, '')).join('\n'); else if (type === 'add-start-space') newText = lines.map(l => '　' + l).join('\n'); else if (type === 'trim-start') newText = lines.map(l => l.replace(/^[ 　]+/, '')).join('\n'); else if (type === 'remove-empty') newText = lines.filter(l => l.trim().length > 0).join('\n'); if (newText !== text) { aaOutput.value = newText; nextTick(() => commitHistory()); showToastMessage('Applied!'); } };
+    // ★修正: テキスト編集ロジック
+    const applyTextEdit = (type: string, fontName = 'Saitamaar') => {
+        // ★修正: 関数名を commitHistory に変更
+        // 変更を加える前に現状を保存します
+        if (typeof commitHistory === 'function') {
+            commitHistory();
+        } else {
+            console.warn('commitHistory function not found');
+        }
+        
+        const text = aaOutput.value;
+        const lines = text.split('\n');
+        let newLines: string[] = [];
+
+        switch (type) {
+            case 'add-end-space':
+                newLines = lines.map(line => line + '　');
+                break;
+
+            case 'trim-end':
+                newLines = lines.map(line => line.replace(/[ 　]+$/, ''));
+                break;
+
+            case 'del-last-char':
+                newLines = lines.map(line => {
+                    const chars = Array.from(line);
+                    if (chars.length > 0) chars.pop();
+                    return chars.join('');
+                });
+                break;
+
+            case 'add-start-space': 
+                newLines = lines.map(line => '　' + line);
+                break;
+            
+            case 'trim-start':
+                newLines = lines.map(line => line.replace(/^[ 　]/, ''));
+                break;
+
+            case 'remove-empty':
+                newLines = lines.filter(line => line.trim().length > 0);
+                break;
+
+            case 'align-right': {
+                let maxW = 0;
+                // 各行の幅とテキストを保持
+                const lineData = lines.map(line => {
+                    const w = measureWidth(line, fontName);
+                    if (w > maxW) maxW = w;
+                    return { text: line, width: w };
+                });
+
+                const zenW = measureWidth('　', fontName);
+                const hanW = measureWidth(' ', fontName);
+                
+                // 誤差許容値
+                const EPSILON = 0.5;
+
+                newLines = lineData.map(item => {
+                    let currentW = item.width;
+                    let spacer = '';
+                    // ターゲット幅との差分
+                    let remaining = maxW - currentW;
+                    
+                    // まず全角で埋める
+                    while (remaining >= zenW - EPSILON) {
+                        spacer += '　';
+                        remaining -= zenW;
+                    }
+                    // 端数を半角で埋める
+                    while (remaining >= hanW - EPSILON) {
+                        spacer += ' ';
+                        remaining -= hanW;
+                    }
+
+                    return item.text + spacer + '|';
+                });
+                break;
+            }
+
+            default:
+                return; 
+        }
+
+        aaOutput.value = newLines.join('\n');
+        showToastMessage('Text Edit Applied');
+    };
 
     // --- ★変更: Syntax Highlight Logic (BBS Mode) ---
     const updateSyntaxHighlight = (bbsMode: boolean) => {

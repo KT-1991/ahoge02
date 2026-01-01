@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
+import { useI18n } from '../composables/useI18n'; // ★追加: 翻訳機能
+
+const { t } = useI18n(); // ★追加
 
 const props = defineProps<{
   currentAaIndex: number;
@@ -33,8 +36,7 @@ const emit = defineEmits<{
   (e: 'toggle-box-mode'): void;
   (e: 'toggle-bg-image'): void;
   (e: 'swap-colors'): void;
-
-  // ★変更: 色更新ではなく「ピッカーを開く」イベントにする
+  (e: 'invert-color'): void;
   (e: 'open-color-picker', target: 'main' | 'sub'): void;
   (e: 'show-timelapse'): void;
 }>();
@@ -67,38 +69,96 @@ const toggleMenu = (menu: string) => {
   <footer class="app-footer">
     
     <div class="footer-group">
-      <button class="nav-btn" @click="$emit('nav-prev')">◀</button>
-      <span class="page-indicator" @click="$emit('toggle-grid')">{{ currentAaIndex + 1 }} / {{ totalAAs }}</span>
-      <button class="nav-btn" @click="$emit('nav-next')">▶</button>
+      <button class="nav-btn" @click="$emit('nav-prev')" title="Previous Page">◀</button>
+      <span class="page-indicator" @click="$emit('toggle-grid')" title="Show Page Grid">{{ currentAaIndex + 1 }} / {{ totalAAs }}</span>
+      <button class="nav-btn" @click="$emit('nav-next')" title="Next Page">▶</button>
       <div class="divider-v"></div>
       <span class="aa-title">{{ title }}</span>
     </div>
 
     <div class="footer-center">
-      <div class="dropdown-container"><button class="text-btn" :class="{ active: showFileMenu }" @click.stop="toggleMenu('file')">File</button><div v-if="showFileMenu" class="popover-menu"><div class="menu-item" @click="$emit('trigger-load', 'AUTO'); closeAllMenus()">📂 Open File...</div><div class="menu-item" @click="$emit('save', 'AST', 'UTF8'); closeAllMenus()">💾 Save (AST/Text)</div><div class="menu-item" @click="$emit('save', 'MLT', 'UTF8'); closeAllMenus()">📦 Save All (MLT)</div><div class="divider-h"></div><div class="menu-item" @click="$emit('show-export'); closeAllMenus()">📤 Export Image...</div></div></div>
-      <div class="dropdown-container"><button class="text-btn" :class="{ active: showEditMenu }" @click.stop="toggleMenu('edit')">Edit</button><div v-if="showEditMenu" class="popover-menu"><div class="menu-item" @click="$emit('undo'); closeAllMenus()">↩ Undo (Ctrl+Z)</div><div class="menu-item" @click="$emit('redo'); closeAllMenus()">↪ Redo (Ctrl+Y)</div><div class="divider-h"></div><div class="menu-item" @click="$emit('paste-box'); closeAllMenus()">📋 Rect Paste (Box)</div><div class="divider-h"></div><div class="menu-item" @click="$emit('apply-edit', 'trim-end'); closeAllMenus()">✂ Trim Line Ends</div><div class="menu-item" @click="$emit('apply-edit', 'remove-empty'); closeAllMenus()">🗑 Remove Empty Lines</div><div class="divider-h"></div><div class="menu-item" @click="$emit('apply-edit', 'add-start-space'); closeAllMenus()">indent (Add Space)</div><div class="menu-item" @click="$emit('apply-edit', 'trim-start'); closeAllMenus()">unindent (Remove Space)</div><div class="divider-h"></div><div class="menu-item danger" @click="$emit('delete'); closeAllMenus()">✖ Delete Page</div></div></div>
-      <div class="dropdown-container"><button class="text-btn" :class="{ active: showCopyMenu }" @click.stop="toggleMenu('copy')">Copy</button><div v-if="showCopyMenu" class="popover-menu"><div class="menu-item" @click="$emit('copy', 'normal'); closeAllMenus()">📄 Copy Text (Ctrl+C)</div><div class="menu-item" @click="$emit('copy', 'bbs'); closeAllMenus()">💬 Copy for BBS (Compat)</div></div></div>
-      <div class="dropdown-container"><button class="text-btn" :class="{ active: showViewMenu }" @click.stop="toggleMenu('view')">View</button>
-      <div v-if="showFileMenu" class="popover-menu">
-          <div class="menu-label">Open File</div>
+      
+      <div class="dropdown-container">
+        <button class="text-btn" :class="{ active: showFileMenu }" @click.stop="toggleMenu('file')">{{ t('menu_file') }}</button>
+        <div v-if="showFileMenu" class="popover-menu">
+          <div class="menu-label">{{ t('file_open') }}</div>
           <div class="menu-item" @click="$emit('trigger-load', 'AUTO'); closeAllMenus()">📂 Auto Detect</div>
           <div class="menu-item" @click="$emit('trigger-load', 'SJIS'); closeAllMenus()">📂 Shift-JIS (Legacy)</div>
           <div class="menu-item" @click="$emit('trigger-load', 'UTF8'); closeAllMenus()">📂 UTF-8</div>
           
           <div class="divider-h"></div>
           
-          <div class="menu-label">Save Text (.txt/.ast)</div>
+          <div class="menu-label">{{ t('file_save_ast') }}</div>
           <div class="menu-item" @click="$emit('save', 'AST', 'UTF8'); closeAllMenus()">💾 Save as UTF-8</div>
           <div class="menu-item" @click="$emit('save', 'AST', 'SJIS'); closeAllMenus()">💾 Save as Shift-JIS</div>
           
           <div class="divider-h"></div>
 
-          <div class="menu-label">Save Project (.mlt)</div>
+          <div class="menu-label">{{ t('file_save_mlt') }}</div>
           <div class="menu-item" @click="$emit('save', 'MLT', 'UTF8'); closeAllMenus()">📦 Save All (UTF-8)</div>
           <div class="menu-item" @click="$emit('save', 'MLT', 'SJIS'); closeAllMenus()">📦 Save All (Shift-JIS)</div>
 
           <div class="divider-h"></div>
-          <div class="menu-item" @click="$emit('show-export'); closeAllMenus()">📤 Export Image...</div>
+          
+          <div class="menu-item" @click="$emit('show-export'); closeAllMenus()">{{ t('file_export') }}</div>
+        </div>
+      </div>
+
+      <div class="dropdown-container">
+        <button class="text-btn" :class="{ active: showEditMenu }" @click.stop="toggleMenu('edit')">{{ t('menu_edit') }}</button>
+<div v-if="showEditMenu" class="popover-menu">
+          <div class="menu-item" @click="$emit('undo'); closeAllMenus()">{{ t('edit_undo') }}</div>
+          <div class="menu-item" @click="$emit('redo'); closeAllMenus()">{{ t('edit_redo') }}</div>
+          
+          <div class="divider-h"></div>
+          
+          <div class="menu-item" @click="$emit('paste-box'); closeAllMenus()">{{ t('edit_paste_box') }}</div>
+          
+          <div class="divider-h"></div>
+          
+          <div class="menu-item" @click="$emit('apply-edit', 'add-start-space'); closeAllMenus()">{{ t('edit_indent') }}</div>
+          <div class="menu-item" @click="$emit('apply-edit', 'trim-start'); closeAllMenus()">{{ t('edit_unindent') }}</div>
+          
+          <div class="divider-h"></div>
+
+          <div class="menu-item" @click="$emit('apply-edit', 'add-end-space'); closeAllMenus()">{{ t('edit_add_end_space') }}</div>
+          <div class="menu-item" @click="$emit('apply-edit', 'del-last-char'); closeAllMenus()">{{ t('edit_del_last') }}</div>
+          <div class="menu-item" @click="$emit('apply-edit', 'trim-end'); closeAllMenus()">{{ t('edit_trim_end') }}</div>
+
+          <div class="divider-h"></div>
+
+          <div class="menu-item" @click="$emit('apply-edit', 'remove-empty'); closeAllMenus()">{{ t('edit_rm_empty') }}</div>
+          <div class="menu-item" @click="$emit('apply-edit', 'align-right'); closeAllMenus()">{{ t('edit_align_right') }}</div>
+          
+          <div class="divider-h"></div>
+          
+          <div class="menu-item danger" @click="$emit('delete'); closeAllMenus()">{{ t('edit_delete_page') }}</div>
+        </div>
+      </div>
+
+      <div class="dropdown-container">
+        <button class="text-btn" :class="{ active: showCopyMenu }" @click.stop="toggleMenu('copy')">{{ t('menu_copy') }}</button>
+        <div v-if="showCopyMenu" class="popover-menu">
+          <div class="menu-item" @click="$emit('copy', 'normal'); closeAllMenus()">{{ t('copy_normal') }}</div>
+          <div class="menu-item" @click="$emit('copy', 'bbs'); closeAllMenus()">{{ t('copy_bbs') }}</div>
+        </div>
+      </div>
+
+      <div class="dropdown-container">
+        <button class="text-btn" :class="{ active: showViewMenu }" @click.stop="toggleMenu('view')">{{ t('menu_view') }}</button>
+        <div v-if="showViewMenu" class="popover-menu">
+          <div class="menu-item" @click="$emit('toggle-layout', 'single'); closeAllMenus()">{{ t('view_single') }}</div>
+          <div class="menu-item" @click="$emit('toggle-layout', 'split-h'); closeAllMenus()">{{ t('view_split_h') }}</div>
+          <div class="menu-item" @click="$emit('toggle-layout', 'split-v'); closeAllMenus()">{{ t('view_split_v') }}</div>
+          <div class="divider-h"></div>
+          <div class="menu-item" @click="$emit('swap-panes'); closeAllMenus()">{{ t('view_swap') }}</div>
+          <div class="menu-item" @click="$emit('toggle-bg-image'); closeAllMenus()">
+            {{ showBackgroundImage ? t('view_bg_hide') : t('view_bg_show') }}
+          </div>
+          <div class="divider-h"></div>
+          <div class="menu-item" @click="$emit('show-timelapse'); closeAllMenus()">{{ t('view_timelapse') }}</div>
+          <div class="divider-h"></div>
+          <div class="menu-item" @click="$emit('pin-ref'); closeAllMenus()">{{ t('view_ref_window') }}</div>
         </div>
       </div>
 
@@ -148,6 +208,8 @@ const toggleMenu = (menu: string) => {
 .menu-item { padding: 6px 16px; cursor: pointer; display: block; color: #333; font-size: 0.85rem; }
 .menu-item:hover { background: #f0f0f0; }
 .menu-item.danger { color: #d32f2f; }
+.menu-label { padding: 4px 12px; font-size: 0.7rem; font-weight: bold; color: #999; background: #f9f9f9; border-bottom: 1px solid #eee; margin-top: 4px; margin-bottom: 2px; }
+.menu-label:first-child { margin-top: 0; }
 .menu-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 150; cursor: default; }
 .mode-badge { background: #4caf50; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
 .mode-badge.box { background: #2196f3; }

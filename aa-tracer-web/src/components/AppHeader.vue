@@ -10,6 +10,7 @@ defineProps<{
 const emit = defineEmits<{
   (e: 'toggle-debug'): void;
   (e: 'toggle-config'): void;
+  (e: 'toggle-help'): void;
 }>();
 </script>
 
@@ -26,6 +27,7 @@ const emit = defineEmits<{
     </div>
 
     <div class="header-right">
+      <button class="icon-btn" @click="$emit('toggle-help')" title="Help">❓</button>
       <button class="icon-btn" @click="$emit('toggle-config')" title="Configuration">⚙️</button>
       <button class="icon-btn" @click="$emit('toggle-debug')" title="Debug Info">🐞</button>
     </div>

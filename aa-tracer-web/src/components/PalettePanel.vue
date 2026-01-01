@@ -18,6 +18,7 @@ const emit = defineEmits<{
   (e: 'delete-aa', idx: number): void;
   (e: 'add-new-aa'): void;
   (e: 'show-palette-editor'): void;
+  (e: 'import-palette', data: any[]): void; // ★追加
 }>();
 
 const currentCategoryId = ref<string>('1');
@@ -46,6 +47,57 @@ const stopResizePalette = () => {
   window.removeEventListener('mousemove', onResizePalette);
   window.removeEventListener('mouseup', stopResizePalette);
 };
+
+// ★追加: パレットのエクスポート
+const exportPalette = () => {
+    const dataStr = JSON.stringify(props.categories, null, 2);
+    const blob = new Blob([dataStr], { type: 'application/json' });
+    const url = URL.createObjectURL(blob);
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = `aa_palette_${Date.now()}.json`;
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    URL.revokeObjectURL(url);
+};
+
+// ★追加: パレットのインポート
+const importPalette = () => {
+    const input = document.createElement('input');
+    input.type = 'file';
+    input.accept = '.json';
+    input.onchange = (e) => {
+        const file = (e.target as HTMLInputElement).files?.[0];
+        if (!file) return;
+        const reader = new FileReader();
+        reader.onload = (ev) => {
+            try {
+                const json = JSON.parse(ev.target?.result as string);
+                if (Array.isArray(json)) {
+                    // 親コンポーネント(App.vue)へ更新を通知する必要があるが、
+                    // PalettePanelは props.categories を直接いじれないため
+                    // ここでは emit('update:categories', json) をしたいところ。
+                    // しかし、現在の実装では categories は App.vue が持っていて
+                    // PalettePanel はそれを props で受け取っているだけなので、
+                    // App.vue 側で categories を更新するイベントを作るか、
+                    // ここで localStorage を書き換えてリロードを促すのが簡易的です。
+                    
+                    // 今回は App.vue と連携するため、emit を追加します
+                    emit('import-palette', json);
+                } else {
+                    alert('Invalid JSON format');
+                }
+            } catch (err) {
+                alert('Failed to parse JSON');
+            }
+        };
+        reader.readAsText(file);
+    };
+    input.click();
+};
+
+
 onUnmounted(() => stopResizePalette());
 </script>
 
@@ -72,7 +124,11 @@ onUnmounted(() => stopResizePalette());
         <select v-model="currentCategoryId" class="category-selector">
           <option v-for="cat in categories" :key="cat.id" :value="cat.id">📂 {{ cat.name }}</option>
         </select>
-        <button class="icon-btn tiny" @click="$emit('show-palette-editor')" title="Edit Palette">✏️</button>
+        <div style="display:flex; gap:5px;">
+            <button class="icon-btn tiny" @click="$emit('show-palette-editor')" title="Edit Palette">✏️</button>
+            <button class="icon-btn tiny" @click="importPalette" title="Import JSON">📂</button>
+            <button class="icon-btn tiny" @click="exportPalette" title="Export JSON">💾</button>
+        </div>
       </div>
       <div class="grid-scroll-area">
         <div class="char-grid-dense">

@@ -171,6 +171,7 @@ export class InferenceEngine {
     ctx.textBaseline = 'top';
     ctx.fillStyle = 'black';
     
+    // モードに関わらず全リストを対象にする（モード切替時のため）
     const loopList = (this.mode === 'classifier') ? this.fullClassList : uniqueChars;
 
     for (let i = 0; i < loopList.length; i++) {
@@ -190,24 +191,28 @@ export class InferenceEngine {
             if (imgData.data[k]! < 128) inkAmount++;
         }
 
-        if (this.mode === 'vector') {
-            const src = (window as any).cv.imread(canvas);
-            const skeleton = FeatureExtractor.skeletonize(src);
-            const features = FeatureExtractor.generate9ChInputFromSkeleton(skeleton);
-            const tensor = this.toTensor(features, 1, 32, 32, 9);
-            if (this.session) {
-                const res = await this.session.run({ input_image: tensor });
-                const keys = Object.keys(res);
-                if (keys.length > 0) vector = res[keys[0]!]!.data as Float32Array;
+        // Encoderがあればベクトル生成
+        if (this.encoderSession) {
+            try {
+                const src = (window as any).cv.imread(canvas);
+                const skeleton = FeatureExtractor.skeletonize(src);
+                const features = FeatureExtractor.generate9ChInputFromSkeleton(skeleton);
+                const tensor = this.toTensor(features, 1, 32, 32, 9);
+                if (this.encoderSession) {
+                    const res = await this.encoderSession.run({ input_image: tensor });
+                    const keys = Object.keys(res);
+                    if (keys.length > 0) vector = res[keys[0]!]!.data as Float32Array;
+                }
+                src.delete(); skeleton.delete();
+            } catch(e) {
+                // Vector生成失敗は無視
             }
-            src.delete(); skeleton.delete();
         }
         this.charDb.push({ char: char, vector, width: w, pixelCount: inkAmount });
     }
     console.log(`DB Rebuilt: ${this.charDb.length} chars.`);
   }
 
-  // ★修正: 縦コンテキスト (prevBottomEdge) を受け取るように変更
   private async rerankCandidates(
       patch: Float32Array, 
       candidates: any[], 
@@ -236,7 +241,6 @@ export class InferenceEngine {
               continue;
           }
 
-          // 文字描画
           ctx.fillStyle = 'white'; ctx.fillRect(0, 0, 32, 32);
           ctx.fillStyle = 'black';
           const info = this.charDb.find(c => c.char === cand.char);
@@ -247,9 +251,8 @@ export class InferenceEngine {
           const src = (window as any).cv.imread(canvas);
           const skeleton = FeatureExtractor.skeletonize(src);
           (window as any).cv.bitwise_not(skeleton, skeleton);
-          const charData = skeleton.data; // Uint8Array 32x32
+          const charData = skeleton.data; 
 
-          // --- 1. 入力画像とのマッチング (IoU) ---
           let intersection = 0;
           let union = 0;
           let charInkSum = 0;
@@ -271,40 +274,29 @@ export class InferenceEngine {
               matchScore = (coverRate * 0.7) + (precision * 0.3);
           }
 
-          // --- 2. 縦方向の接続チェック (Vertical Context) ---
           let verticalConnectScore = 0.0;
           if (prevBottomEdge) {
-              // 上の行のボトム(prevBottomEdge) と 今回のトップ(py=0~2付近) を比較
               let connectHits = 0;
               let connectTotal = 0;
-              
-              // 横方向の範囲 (x軸)
               for (let px = 0; px < 32; px++) {
-                  // 前行の最下段付近 (既に0/1化されている前提)
                   const upperVal = prevBottomEdge[px]!; 
                   if (upperVal > 0) {
                       connectTotal += 1;
-                      // 今の文字の最上段付近 (py=0,1,2) にインクがあるか？
                       let hasInkBelow = false;
                       for(let py=0; py<3; py++) {
                           if (charData[py*32 + px] > 100) hasInkBelow = true;
-                          // 左右のブレも許容 (±1px)
                           if (px>0 && charData[py*32 + px - 1] > 100) hasInkBelow = true;
                           if (px<31 && charData[py*32 + px + 1] > 100) hasInkBelow = true;
                       }
                       if (hasInkBelow) connectHits += 1;
                   }
               }
-              // つながるべき箇所のうち、実際につながった割合
               if (connectTotal > 0) {
                   verticalConnectScore = (connectHits / connectTotal);
               }
           }
 
-          // スコア統合
-          // Vertical Context があれば強力に加点
           const finalScore = (cand.score * 0.3) + (matchScore * 0.5) + (verticalConnectScore * 0.5);
-          
           reranked.push({ ...cand, finalScore });
           src.delete(); skeleton.delete();
       }
@@ -312,18 +304,14 @@ export class InferenceEngine {
       return reranked;
   }
 
-  // ★修正: 戻り値を { text, bottomEdge } に変更
-  // また引数に prevBottomEdge を追加
   async solveLine(
     lineFeatures: Float32Array, width: number,
     blueChar: string, redChar: string, maskData: Uint8ClampedArray | null = null, 
     _yOffset: number = 0, generationMode: 'hybrid' | 'accurate' = 'hybrid', 
     measureCtx: CanvasRenderingContext2D | null = null,
-    prevBottomEdge: Float32Array | null = null // 追加
+    prevBottomEdge: Float32Array | null = null 
   ): Promise<{ text: string, bottomEdge: Float32Array }> {
     
-    // 現在行のBottom Edgeを構築するためのバッファ
-    // 幅は width (px) 分確保
     const currentBottomEdge = new Float32Array(width);
 
     // --- Classifier Mode ---
@@ -336,8 +324,6 @@ export class InferenceEngine {
         const maxSteps = width * 2; 
 
         while (beams.length > 0 && step < maxSteps) {
-            // (Classifierの探索ループは変更なし)
-            // ... (省略せずに記述しますが、長くなるため前回のClassifier部分と同じ) ...
             const newBeams = [];
             const finishedBeams = [];
             for (const b of beams) {
@@ -352,7 +338,17 @@ export class InferenceEngine {
                     if (color === 'red') forcedChar = redChar;
                 }
                 if (forcedChar) {
-                    const w = this.charWidthCache.get(forcedChar) || 8.0;
+                    // 幅の取得を強化: キャッシュになければ計測、計測不可なら文字数×8px
+                    let w = this.charWidthCache.get(forcedChar);
+                    if (w === undefined) {
+                        if (measureCtx) {
+                            w = measureCtx.measureText(forcedChar).width;
+                        } else {
+                            // キャッシュもなく計測もできない場合のフォールバック
+                            w = forcedChar.length * (this.charWidthCache.get(' ') || 8.0);
+                        }
+                    }
+                    
                     let nextX = b.x + w;
                     const nextText = b.text + forcedChar;
                     if (generationMode === 'accurate' && measureCtx) {
@@ -364,7 +360,6 @@ export class InferenceEngine {
                     continue; 
                 }
 
-                // Ink Gate
                 const patch = this.extractPatch(lineFeatures, width, centerX);
                 let sumSkeleton = 0; let sumDensity = 0;
                 for (let i = 0; i < 32*32; i++) {
@@ -413,7 +408,6 @@ export class InferenceEngine {
             step++;
         }
         beams.sort((a, b) => a.cost - b.cost);
-        // ClassifierモードはBottomEdge計算を省略（または必要なら実装）
         return { text: beams[0]?.text || "", bottomEdge: currentBottomEdge };
     }
 
@@ -446,7 +440,6 @@ export class InferenceEngine {
         const xEnd = xCenterInt + half;
         if (xEnd > width) { finishedBeams.push(b); continue; }
 
-        // ハッチング反映
         let forcedChar = null;
         if (maskData) {
             const y = 16; 
@@ -462,7 +455,6 @@ export class InferenceEngine {
 
         const patch = this.extractPatch(lineFeatures, width, xCenterInt);
 
-        // Ink Gate
         let centerInk = 0;
         const cy = 16; const cx = 16;
         for(let dy=-6; dy<6; dy++) {
@@ -481,28 +473,36 @@ export class InferenceEngine {
         } else {
             if (!searchCache.has(xCenterInt)) {
                 const tensor = this.toTensor(patch, 1, 32, 32, 9);
-                const res = await this.session!.run({ input_image: tensor });
-                const keys = Object.keys(res);
-                const outputData = res[keys[0]!]!.data as Float32Array;
-                const baseCands = this.searchVectorDb(outputData, 15);
                 
-                // ★修正: 前行のBottomEdge情報を渡してRerank
-                // 前行の該当箇所 (xStart ~ xEnd) を切り出す
-                let prevPatchBottom: Float32Array | null = null;
-                if (prevBottomEdge) {
-                    prevPatchBottom = new Float32Array(32);
-                    for(let px=0; px<32; px++) {
-                        const globalX = xStart + px;
-                        if(globalX >= 0 && globalX < width) {
-                            prevPatchBottom[px] = prevBottomEdge[globalX]!;
+                // ★修正: Vector Modeなら必ず encoderSession を使用する
+                const sess = this.encoderSession || this.session;
+                
+                if (sess) {
+                    const res = await sess.run({ input_image: tensor });
+                    const keys = Object.keys(res);
+                    const outputData = res[keys[0]!]!.data as Float32Array;
+                    const baseCands = this.searchVectorDb(outputData, 15);
+                    
+                    let prevPatchBottom: Float32Array | null = null;
+                    if (prevBottomEdge) {
+                        prevPatchBottom = new Float32Array(32);
+                        for(let px=0; px<32; px++) {
+                            const globalX = xStart + px;
+                            if(globalX >= 0 && globalX < width) {
+                                prevPatchBottom[px] = prevBottomEdge[globalX]!;
+                            }
                         }
                     }
-                }
 
-                const reranked = await this.rerankCandidates(patch, baseCands, tempCtx, prevPatchBottom);
-                searchCache.set(xCenterInt, reranked);
+                    const reranked = await this.rerankCandidates(patch, baseCands, tempCtx, prevPatchBottom);
+                    searchCache.set(xCenterInt, reranked);
+                } else {
+                    candidates = []; // セッションがない場合
+                }
             }
-            candidates = searchCache.get(xCenterInt)!;
+            if (searchCache.has(xCenterInt)) {
+                candidates = searchCache.get(xCenterInt)!;
+            }
         }
 
         for (const cand of candidates) {
@@ -548,26 +548,14 @@ export class InferenceEngine {
     
     const bestText = beams[0]?.text || "";
 
-    // ★重要: 生成されたテキストから、次行のためのBottom Edgeを計算する
-    // (これは少し重い処理なので、Vectorモードのみで実施)
     if (this.mode === 'vector') {
         let currentX = 0.0;
         const canvas = tempCtx.canvas;
         tempCtx.fillStyle = 'black'; 
-        // 描画ループ
         for (const char of bestText) {
             const w = this.charWidthCache.get(char) || 10.0;
-            // 描画
             tempCtx.fillStyle = 'white'; tempCtx.fillRect(0,0,32,32);
             tempCtx.fillStyle = 'black';
-            // 位置合わせ (中央寄せでDB登録されているため、描画もそれに合わせる)
-            // ただしここでは「AAとしての描画」なので、左詰めが良いか？
-            // -> InferenceEngineのrerankは「中央寄せ文字」を使っている。
-            // -> ここでは正確な位置（x）に文字を置きたいが、Canvasは32x32しかない。
-            // -> 仕方ないので1文字ずつ描画し、BottomEdge配列の該当箇所を埋める。
-            
-            // 簡易的に：32x32の中央に描画し、そのBottom 3行分を取り出す
-            // それを currentBottomEdge[currentX ... currentX+w] に書き込む
             const dbW = this.charDb.find(c=>c.char===char)?.width || w;
             const drawX = (32 - dbW)/2;
             const drawY = (32 - 16)/2;
@@ -576,21 +564,14 @@ export class InferenceEngine {
             const src = (window as any).cv.imread(canvas);
             const skeleton = FeatureExtractor.skeletonize(src);
             (window as any).cv.bitwise_not(skeleton, skeleton);
-            const charData = skeleton.data; // 32x32
+            const charData = skeleton.data; 
             
-            // 下端3行 (y=29,30,31) にインクがあるかチェック
-            // インクがあれば、その列(x)は「接続点」とする
             for(let cx=0; cx<32; cx++) {
                 let hasInk = false;
                 for(let cy=29; cy<32; cy++) {
                     if (charData[cy*32 + cx] > 100) hasInk = true;
                 }
                 if (hasInk) {
-                    // 全体のX座標: currentX + (cx - drawX) ?
-                    // いや、文字幅wの中にcxが収まる範囲でマッピングする
-                    // 文字の開始位置: Math.round(currentX)
-                    // 文字内の相対位置: cx - drawX (中央寄せのオフセットを引く)
-                    // ただし、drawXは余白なので、実体は drawX から始まる
                     const globalX = Math.round(currentX) + (cx - Math.floor(drawX));
                     if (globalX >= 0 && globalX < width) {
                         currentBottomEdge[globalX] = 1.0;
@@ -605,8 +586,6 @@ export class InferenceEngine {
     return { text: bestText, bottomEdge: currentBottomEdge };
   }
 
-  // --- Helpers ---
-  // (以降は前回のまま変更なし)
   private getColorAt(maskData: Uint8ClampedArray, width: number, x: number, y: number) {
       const idx = (Math.floor(y) * width + Math.floor(x)) * 4;
       if (idx < 0 || idx >= maskData.length) return null;
@@ -618,7 +597,7 @@ export class InferenceEngine {
       if (r > 100 && b < 100) return 'red';
       return null;
   }
-  // ... (getMaskedTopKClasses, searchVectorDb, extractPatch, toTensor, getLoadedCharList, recordUsage, suggestText)
+
   private getMaskedTopKClasses(logits: Float32Array, topK: number) {
       const indexed: { score: number, index: number }[] = [];
       const len = Math.min(logits.length, this.activeClassMask.length);
@@ -653,6 +632,10 @@ export class InferenceEngine {
             return { ...item, score: -Infinity };
         }
         if (!item.vector) return { ...item, score: -9999 };
+        
+        // 次元数チェック (念のため)
+        if (item.vector.length !== t.length) return { ...item, score: -9999 };
+
         let dot = 0;
         for(let i=0; i<t.length; i++) dot += t[i]! * item.vector[i]!;
         return { ...item, score: dot };
@@ -727,10 +710,18 @@ export class InferenceEngine {
               if (color === 'red') forcedChar = redChar;
           }
           if (forcedChar) {
-              const w = this.charWidthCache.get(forcedChar) || 8.0;
-              resultText += forcedChar;
-              currentX += w;
-              continue;
+                let w = this.charWidthCache.get(forcedChar);
+                if (w === undefined) {
+                    // tempCtxがあれば計測
+                    if (tempCtx) {
+                        w = tempCtx.measureText(forcedChar).width;
+                    } else {
+                        w = forcedChar.length * 8.0;
+                    }
+                }
+                resultText += forcedChar;
+                currentX += w;
+                continue;
           }
 
           const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
@@ -760,8 +751,12 @@ export class InferenceEngine {
           }
 
           const tensor = this.toTensor(patch, 1, 32, 32, 9);
-          if (!this.session) break;
-          const res = await this.session.run({ input_image: tensor });
+          
+          // ★修正: Vector Modeなら encoderSession を使う
+          const sess = (this.mode === 'vector' && this.encoderSession) ? this.encoderSession : this.session;
+          if (!sess) break;
+          
+          const res = await sess.run({ input_image: tensor });
           const keys = Object.keys(res);
           const outputData = res[keys[0]!]!.data as Float32Array;
           
@@ -771,7 +766,6 @@ export class InferenceEngine {
           } else {
               const baseCands = this.searchVectorDb(outputData, 15);
               if (tempCtx) {
-                  // 局所推論では縦コンテキスト(prevBottomEdge)はないのでnullを渡す
                   candidates = await this.rerankCandidates(patch, baseCands, tempCtx, null);
               } else {
                   candidates = baseCands;
@@ -805,15 +799,13 @@ export class InferenceEngine {
       return scored[0];
   }
 
-  // ★追加: 指定位置の候補リスト(Top-K)を返すメソッド
   async getCandidatesAt(
       lineFeatures: Float32Array, imgWidth: number, startX: number, 
       maskData: Uint8ClampedArray | null = null,
       blueChar: string = ':', redChar: string = '/'
   ): Promise<{ char: string, score: number }[]> {
-      const centerX = startX + 6; // suggestTextと同様の中心補正
+      const centerX = startX + 6; 
       
-      // マスクによる強制文字チェック
       if (maskData) {
           const y = 16; 
           const color = this.getColorAt(maskData, imgWidth, centerX, y);
@@ -823,7 +815,6 @@ export class InferenceEngine {
 
       const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
       
-      // インク量チェック
       let centerInk = 0;
       if (this.mode === 'vector') {
           const cy = 16; const cx = 16;
@@ -835,29 +826,29 @@ export class InferenceEngine {
           centerInk = sum / (32*32);
       }
 
-      // インクが薄すぎる場合はスペースを返す
       const threshold = (this.mode === 'vector') ? 0 : 0;
       if (centerInk < threshold) {
           return [{ char: ' ', score: 100 }];
       }
 
-      // 推論実行
       const tensor = this.toTensor(patch, 1, 32, 32, 9);
-      if (!this.session) return [];
-      const res = await this.session.run({ input_image: tensor });
+      
+      // ★修正: Vector Modeなら encoderSession を使う
+      const sess = (this.mode === 'vector' && this.encoderSession) ? this.encoderSession : this.session;
+      if (!sess) return [];
+      
+      const res = await sess.run({ input_image: tensor });
       const keys = Object.keys(res);
       const outputData = res[keys[0]!]!.data as Float32Array;
 
       let candidates: any[] = [];
       
       if (this.mode === 'classifier') {
-          candidates = this.getMaskedTopKClasses(outputData, 20); // Top 20取得
+          candidates = this.getMaskedTopKClasses(outputData, 20); 
       } else {
-          // Vector検索
           candidates = this.searchVectorDb(outputData, 20);
       }
 
-      // { char, score } の配列にして返す
       return candidates.map(c => ({ char: c.char, score: c.score }));
   }
 }
