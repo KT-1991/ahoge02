@@ -9,6 +9,8 @@ const props = defineProps<{
   isBoxSelecting: boolean;
   viewMode: string;
   showBackgroundImage: boolean;
+  aaTextColor: string;
+  subTextColor: string;
 }>();
 
 const emit = defineEmits<{
@@ -18,191 +20,143 @@ const emit = defineEmits<{
   (e: 'duplicate'): void;
   (e: 'pin-ref'): void;
   (e: 'delete'): void;
-  
-  // History
   (e: 'undo'): void;
   (e: 'redo'): void;
-
-  // Menus
   (e: 'trigger-load', enc: string): void;
   (e: 'save', format: 'AST'|'MLT', enc: 'SJIS'|'UTF8'): void;
   (e: 'copy', mode: 'normal'|'bbs'): void;
   (e: 'show-export'): void;
-  
-  // Edit
   (e: 'apply-edit', type: string): void;
   (e: 'paste-box'): void;
-
-  // Layout
   (e: 'toggle-layout', mode: string): void;
   (e: 'swap-panes'): void;
   (e: 'toggle-box-mode'): void;
   (e: 'toggle-bg-image'): void;
+  (e: 'swap-colors'): void;
+
+  // ★変更: 色更新ではなく「ピッカーを開く」イベントにする
+  (e: 'open-color-picker', target: 'main' | 'sub'): void;
+  (e: 'show-timelapse'): void;
 }>();
 
-// Popover states
+// Popover States
 const showFileMenu = ref(false);
 const showEditMenu = ref(false);
-const showLayoutMenu = ref(false);
+const showCopyMenu = ref(false);
+const showViewMenu = ref(false);
+
+const closeAllMenus = () => {
+    showFileMenu.value = false;
+    showEditMenu.value = false;
+    showCopyMenu.value = false;
+    showViewMenu.value = false;
+};
+
+const toggleMenu = (menu: string) => {
+    const targetState = 
+        menu === 'file' ? showFileMenu : 
+        menu === 'edit' ? showEditMenu :
+        menu === 'copy' ? showCopyMenu : showViewMenu;
+    const current = targetState.value;
+    closeAllMenus();
+    targetState.value = !current;
+};
 </script>
 
 <template>
-  <footer class="sketchbook-nav">
-    <div class="nav-controls">
-      <button class="page-btn" @click="$emit('nav-prev')" title="Previous Page">←</button>
-      
-      <div class="page-indicator" @click="$emit('toggle-grid')" title="Show Grid View">
-        <span class="icon">📄</span>
-        <span class="page-text">{{ currentAaIndex + 1 }} / {{ totalAAs }}</span>
-        <span class="dropdown-arrow">▼</span>
-      </div>
-      
-      <button class="page-btn" @click="$emit('nav-next')" title="Next Page">→</button>
-
+  <footer class="app-footer">
+    
+    <div class="footer-group">
+      <button class="nav-btn" @click="$emit('nav-prev')">◀</button>
+      <span class="page-indicator" @click="$emit('toggle-grid')">{{ currentAaIndex + 1 }} / {{ totalAAs }}</span>
+      <button class="nav-btn" @click="$emit('nav-next')">▶</button>
       <div class="divider-v"></div>
-
-      <button class="icon-action-btn" @click="$emit('undo')" title="Undo (Ctrl+Z)">↩</button>
-      <button class="icon-action-btn" @click="$emit('redo')" title="Redo (Ctrl+Y)">↪</button>
+      <span class="aa-title">{{ title }}</span>
     </div>
 
-    <div class="footer-status">
-      <span class="status-info">Ln {{ cursorInfo.row }}, Col {{ cursorInfo.col }}</span>
-      <span class="status-info dim">{{ cursorInfo.charCount }} chars</span>
-    </div>
+    <div class="footer-center">
+      <div class="dropdown-container"><button class="text-btn" :class="{ active: showFileMenu }" @click.stop="toggleMenu('file')">File</button><div v-if="showFileMenu" class="popover-menu"><div class="menu-item" @click="$emit('trigger-load', 'AUTO'); closeAllMenus()">📂 Open File...</div><div class="menu-item" @click="$emit('save', 'AST', 'UTF8'); closeAllMenus()">💾 Save (AST/Text)</div><div class="menu-item" @click="$emit('save', 'MLT', 'UTF8'); closeAllMenus()">📦 Save All (MLT)</div><div class="divider-h"></div><div class="menu-item" @click="$emit('show-export'); closeAllMenus()">📤 Export Image...</div></div></div>
+      <div class="dropdown-container"><button class="text-btn" :class="{ active: showEditMenu }" @click.stop="toggleMenu('edit')">Edit</button><div v-if="showEditMenu" class="popover-menu"><div class="menu-item" @click="$emit('undo'); closeAllMenus()">↩ Undo (Ctrl+Z)</div><div class="menu-item" @click="$emit('redo'); closeAllMenus()">↪ Redo (Ctrl+Y)</div><div class="divider-h"></div><div class="menu-item" @click="$emit('paste-box'); closeAllMenus()">📋 Rect Paste (Box)</div><div class="divider-h"></div><div class="menu-item" @click="$emit('apply-edit', 'trim-end'); closeAllMenus()">✂ Trim Line Ends</div><div class="menu-item" @click="$emit('apply-edit', 'remove-empty'); closeAllMenus()">🗑 Remove Empty Lines</div><div class="divider-h"></div><div class="menu-item" @click="$emit('apply-edit', 'add-start-space'); closeAllMenus()">indent (Add Space)</div><div class="menu-item" @click="$emit('apply-edit', 'trim-start'); closeAllMenus()">unindent (Remove Space)</div><div class="divider-h"></div><div class="menu-item danger" @click="$emit('delete'); closeAllMenus()">✖ Delete Page</div></div></div>
+      <div class="dropdown-container"><button class="text-btn" :class="{ active: showCopyMenu }" @click.stop="toggleMenu('copy')">Copy</button><div v-if="showCopyMenu" class="popover-menu"><div class="menu-item" @click="$emit('copy', 'normal'); closeAllMenus()">📄 Copy Text (Ctrl+C)</div><div class="menu-item" @click="$emit('copy', 'bbs'); closeAllMenus()">💬 Copy for BBS (Compat)</div></div></div>
+      <div class="dropdown-container"><button class="text-btn" :class="{ active: showViewMenu }" @click.stop="toggleMenu('view')">View</button>
+      <div v-if="showFileMenu" class="popover-menu">
+          <div class="menu-label">Open File</div>
+          <div class="menu-item" @click="$emit('trigger-load', 'AUTO'); closeAllMenus()">📂 Auto Detect</div>
+          <div class="menu-item" @click="$emit('trigger-load', 'SJIS'); closeAllMenus()">📂 Shift-JIS (Legacy)</div>
+          <div class="menu-item" @click="$emit('trigger-load', 'UTF8'); closeAllMenus()">📂 UTF-8</div>
+          
+          <div class="divider-h"></div>
+          
+          <div class="menu-label">Save Text (.txt/.ast)</div>
+          <div class="menu-item" @click="$emit('save', 'AST', 'UTF8'); closeAllMenus()">💾 Save as UTF-8</div>
+          <div class="menu-item" @click="$emit('save', 'AST', 'SJIS'); closeAllMenus()">💾 Save as Shift-JIS</div>
+          
+          <div class="divider-h"></div>
 
-    <div class="meta-actions">
-      
-      <div class="dropdown-container">
-        <button class="text-btn" @click="showLayoutMenu = !showLayoutMenu" :class="{ active: showLayoutMenu }">Layout</button>
-        <div class="popover-menu bottom-up" v-if="showLayoutMenu" @click.self="showLayoutMenu = false">
-          <div class="menu-label">View Mode</div>
-          <button class="menu-item" @click="$emit('toggle-layout', 'single')">⬜ Single View</button>
-          <button class="menu-item" @click="$emit('toggle-layout', 'split-h')">日 Split Horizontal</button>
-          <button class="menu-item" @click="$emit('toggle-layout', 'split-v')">|| Split Vertical</button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" @click="$emit('swap-panes')">⇄ Swap Panes</button>
-          <button class="menu-item" @click="$emit('toggle-bg-image')">{{ showBackgroundImage ? 'Hide' : 'Show' }} Image</button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" @click="$emit('toggle-box-mode')">
-            {{ isBoxSelecting ? 'Exit Box Mode' : 'Enter Box Mode' }}
-          </button>
+          <div class="menu-label">Save Project (.mlt)</div>
+          <div class="menu-item" @click="$emit('save', 'MLT', 'UTF8'); closeAllMenus()">📦 Save All (UTF-8)</div>
+          <div class="menu-item" @click="$emit('save', 'MLT', 'SJIS'); closeAllMenus()">📦 Save All (Shift-JIS)</div>
+
+          <div class="divider-h"></div>
+          <div class="menu-item" @click="$emit('show-export'); closeAllMenus()">📤 Export Image...</div>
         </div>
       </div>
 
-      <div class="dropdown-container">
-        <button class="text-btn" @click="showEditMenu = !showEditMenu" :class="{ active: showEditMenu }">Edit</button>
-        <div class="popover-menu bottom-up" v-if="showEditMenu" @click.self="showEditMenu = false">
-          <div class="menu-label">Formatting</div>
-          <button class="menu-item" @click="$emit('apply-edit', 'trim-end')">Trim End Space</button>
-          <button class="menu-item" @click="$emit('apply-edit', 'add-end-space')">Add End Space</button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" @click="$emit('apply-edit', 'trim-start')">Trim Start Space</button>
-          <button class="menu-item" @click="$emit('apply-edit', 'add-start-space')">Add Start Space</button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" @click="$emit('apply-edit', 'remove-empty')">Remove Empty Lines</button>
-          <button class="menu-item" @click="$emit('apply-edit', 'align-right')">Align Right (|)</button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" @click="$emit('paste-box')">Rect Paste (Overwrite)</button>
+      <div class="divider-v" style="margin: 0 4px;"></div>
+
+      <div class="color-palette-widget">
+        <div class="color-pair">
+            <button class="color-sq sub" :style="{ backgroundColor: subTextColor }" title="Sub Color"
+                 @click.stop="emit('open-color-picker', 'sub')">
+            </button>
+            <button class="color-sq main" :style="{ backgroundColor: aaTextColor }" title="Main Color"
+                 @click.stop="emit('open-color-picker', 'main')">
+            </button>
         </div>
+        <button class="swap-mini-btn" @click.stop="emit('swap-colors')" title="Swap Colors">
+            <svg viewBox="0 0 24 24" width="10" height="10"><path fill="currentColor" d="M6.99 11L3 15l3.99 4v-3H14v-2H6.99v-3zM21 9l-3.99-4v3H10v2h7.01v3L21 9z"></path></svg>
+        </button>
       </div>
-
-      <div class="dropdown-container">
-        <button class="text-btn" @click="showFileMenu = !showFileMenu" :class="{ active: showFileMenu }">File</button>
-        <div class="popover-menu bottom-up" v-if="showFileMenu" @click.self="showFileMenu = false">
-          <div class="menu-label">Open</div>
-          <button class="menu-item" @click="$emit('trigger-load', 'AUTO')">📂 Open (Auto)</button>
-          <button class="menu-item" @click="$emit('trigger-load', 'SJIS')">📂 Open (SJIS)</button>
-          <div class="menu-sep"></div>
-          <div class="menu-label">Save Project</div>
-          <button class="menu-item" @click="$emit('save', 'AST', 'SJIS')">💾 Save AST (SJIS)</button>
-          <button class="menu-item" @click="$emit('save', 'AST', 'UTF8')">💾 Save AST (UTF8)</button>
-          <button class="menu-item" @click="$emit('save', 'MLT', 'SJIS')">💾 Export MLT (SJIS)</button>
-          <div class="menu-sep"></div>
-          <div class="menu-label">Clipboard</div>
-          <button class="menu-item" @click="$emit('copy', 'normal')">📋 Copy Text</button>
-          <button class="menu-item" @click="$emit('copy', 'bbs')">🛡️ Copy (BBS Safe)</button>
-          <div class="menu-sep"></div>
-          <button class="menu-item" @click="$emit('show-export')">📤 Export Image</button>
-        </div>
-      </div>
-
-      <div class="divider-v"></div>
-
-      <button class="icon-action-btn" @click="$emit('duplicate')" title="Duplicate Page">📄⁺</button>
-      <button class="icon-action-btn" @click="$emit('pin-ref')" title="Pin as Reference">📌</button>
-      <button class="icon-action-btn danger" @click="$emit('delete')" title="Delete Page">🗑️</button>
     </div>
+
+    <div class="footer-group right">
+        <div v-if="isBoxSelecting" class="mode-badge box">BOX SELECT</div>
+        <span class="info-item">{{ cursorInfo.px }} px</span><div class="divider-v"></div>
+        <span class="info-item">Ln {{ cursorInfo.row + 1 }}, Col {{ cursorInfo.col }}</span><div class="divider-v"></div>
+        <span class="info-item">{{ cursorInfo.charCount }} chars</span>
+    </div>
+
+    <div v-if="showFileMenu || showEditMenu || showCopyMenu || showViewMenu" 
+         class="menu-backdrop" @click="closeAllMenus"></div>
   </footer>
 </template>
 
 <style scoped>
-.sketchbook-nav {
-    height: 50px;
-    background: #fff;
-    border-top: 1px solid rgba(0,0,0,0.08);
-    display: flex; align-items: center; justify-content: space-between;
-    padding: 0 15px;
-    box-shadow: 0 -4px 20px rgba(0,0,0,0.03);
-    z-index: 20;
-    user-select: none;
-}
-
-.nav-controls { display: flex; align-items: center; gap: 8px; }
-
-.page-btn {
-    width: 32px; height: 32px; border-radius: 50%; border: 1px solid #ddd;
-    background: #fff; cursor: pointer; color: #555; font-size: 1rem;
-    display: flex; align-items: center; justify-content: center; transition: all 0.1s;
-}
-.page-btn:hover { background: #e6b086; color: #fff; border-color: #e6b086; }
-
-.page-indicator {
-    font-weight: bold; font-size: 0.85rem; color: #444;
-    padding: 4px 12px; border-radius: 16px;
-    background: #f5f5f5; cursor: pointer; border: 1px solid transparent;
-    transition: background 0.2s;
-    display: flex; align-items: center; gap: 6px;
-}
-.page-indicator:hover { background: #eee; border-color: #ddd; }
-.dropdown-arrow { font-size: 0.6rem; opacity: 0.5; }
-
-.footer-status {
-    font-size: 0.75rem; color: #888; font-family: monospace;
-    display: flex; gap: 10px;
-}
-.status-info.dim { opacity: 0.6; }
-
-.meta-actions { display: flex; gap: 4px; align-items: center; }
-
-.divider-v { width: 1px; height: 20px; background: #ddd; margin: 0 4px; }
-
-.text-btn {
-    background: transparent; border: none; color: #555; font-weight: bold; font-size: 0.85rem;
-    cursor: pointer; padding: 6px 10px; border-radius: 6px; transition: background 0.2s;
-}
-.text-btn:hover, .text-btn.active { background: #f0f0f0; color: #222; }
-
-.icon-action-btn {
-    width: 30px; height: 30px; border-radius: 4px; border: none;
-    background: transparent; cursor: pointer; color: #666; font-size: 1.1rem;
-    display: flex; align-items: center; justify-content: center;
-}
-.icon-action-btn:hover { background: #f0f0f0; color: #333; }
-.icon-action-btn.danger:hover { background: #fee2e2; color: #dc2626; }
-
-/* Popover */
-.dropdown-container { position: relative; }
-.popover-menu {
-    position: absolute; bottom: 35px; right: 0;
-    min-width: 200px; background: white; border: 1px solid #ddd;
-    border-radius: 6px; box-shadow: 0 4px 15px rgba(0,0,0,0.1);
-    padding: 4px 0; z-index: 100;
-}
-.menu-label { padding: 6px 12px; font-size: 0.7rem; color: #999; font-weight: bold; background: #fafafa; border-bottom: 1px solid #eee; }
-.menu-item {
-    display: block; width: 100%; text-align: left; padding: 8px 15px;
-    background: none; border: none; font-size: 0.85rem; color: #333; cursor: pointer;
-}
-.menu-item:hover { background: #f7f7f7; color: #e6b086; }
-.menu-sep { height: 1px; background: #eee; margin: 2px 0; }
+.app-footer { height: 35px; background: #fdfdfd; border-top: 1px solid #ddd; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 0.85rem; user-select: none; color: #444; position: relative; z-index: 200; overflow: visible !important; }
+.footer-group { display: flex; align-items: center; gap: 8px; }
+.footer-center { display: flex; align-items: center; gap: 4px; position: absolute; left: 50%; transform: translateX(-50%); z-index: 300; pointer-events: auto; overflow: visible !important; }
+.footer-group.right { justify-content: flex-end; font-family: monospace; font-size: 0.8rem; color: #666; }
+.nav-btn, .text-btn, .icon-btn { background: transparent; border: none; cursor: pointer; }
+.nav-btn:hover, .text-btn:hover { background: #eee; }
+.text-btn { padding: 4px 10px; border-radius: 4px; font-weight: 500; color: #444; }
+.text-btn.active { background: #e0e0e0; color: #000; }
+.divider-v { width: 1px; height: 16px; background: #ddd; margin: 0 4px; }
+.divider-h { height: 1px; background: #eee; margin: 4px 0; }
+.info-item { min-width: 60px; text-align: center; }
+.dropdown-container { position: relative; overflow: visible; }
+.popover-menu { position: absolute; bottom: 38px; left: 0; min-width: 180px; background: white; border: 1px solid #ccc; border-radius: 6px; box-shadow: 0 5px 15px rgba(0,0,0,0.15); padding: 4px 0; z-index: 400; animation: slideUp 0.1s ease-out; }
+.menu-item { padding: 6px 16px; cursor: pointer; display: block; color: #333; font-size: 0.85rem; }
+.menu-item:hover { background: #f0f0f0; }
+.menu-item.danger { color: #d32f2f; }
+.menu-backdrop { position: fixed; top: 0; left: 0; width: 100vw; height: 100vh; z-index: 150; cursor: default; }
+.mode-badge { background: #4caf50; color: white; padding: 2px 6px; border-radius: 4px; font-size: 0.7rem; font-weight: bold; }
+.mode-badge.box { background: #2196f3; }
+.color-palette-widget { display: flex; align-items: center; gap: 6px; margin-left: 6px; position: relative; overflow: visible !important; }
+.color-pair { position: relative; width: 24px; height: 24px; cursor: pointer; }
+.color-sq { position: absolute; width: 14px; height: 14px; border: 1px solid #999; box-shadow: 0 1px 2px rgba(0,0,0,0.2); cursor: pointer; padding: 0; z-index: 10; }
+.color-sq.sub { bottom: 0; right: 0; z-index: 20; }
+.color-sq.main { top: 0; left: 0; z-index: 21; }
+.swap-mini-btn { background: transparent; border: none; cursor: pointer; padding: 0; color: #666; display: flex; align-items: center; justify-content: center; opacity: 0.7; width: 16px; height: 16px; }
+.swap-mini-btn:hover { opacity: 1; color: #333; }
+@keyframes slideUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 </style>

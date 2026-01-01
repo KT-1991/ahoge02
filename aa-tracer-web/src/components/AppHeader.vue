@@ -1,65 +1,60 @@
 <script setup lang="ts">
-import { ref } from 'vue';
-
-const props = defineProps<{
+// Props定義を修正 (色関連を削除)
+defineProps<{
   status: string;
   isReady: boolean;
   isProcessing: boolean;
-  aaTextColor: string;
-  subTextColor: string;
 }>();
 
+// Emits定義を修正 (色関連を削除)
 const emit = defineEmits<{
-  (e: 'update:aaTextColor', val: string): void;
-  (e: 'update:subTextColor', val: string): void;
   (e: 'toggle-debug'): void;
   (e: 'toggle-config'): void;
-  (e: 'swap-colors'): void;
-  (e: 'invert-color'): void;
 }>();
-
-const showColorPicker = ref(false);
-const hueValue = ref(0);
-const presetColors = ['#222222', '#ffffff', '#e60012', '#009944', '#0068b7', '#f39800', '#fff100', '#8fc31f', '#00b7ee', '#920783'];
-
-const updateHue = () => {
-  emit('update:aaTextColor', `hsl(${hueValue.value}, 70%, 50%)`);
-};
 </script>
 
 <template>
   <header class="app-header">
-    <div class="brand">
-      <div class="status-indicator" :class="{ ready: isReady, processing: isProcessing }"></div>
-      Cozy Craft AA
-    </div>
-    <div class="visual-controls">
-      <button class="nav-icon-btn" @click="$emit('toggle-debug')" title="Debug View">👁️ Debug</button>
-      <button class="nav-icon-btn" @click="$emit('toggle-config')" title="AI Config">⚙️ Config</button>
-
-      <div class="color-control-group">
-        <button class="icon-btn tiny" @click="$emit('swap-colors')" title="Swap Colors">⇄</button>
-        <div class="dual-swatch-container">
-          <div class="swatch-back" :style="{ background: subTextColor }" @click="$emit('swap-colors')"></div>
-          <button class="swatch-front" :style="{ background: aaTextColor }" @click="showColorPicker = !showColorPicker"></button>
-        </div>
-        <button class="icon-btn tiny" @click="$emit('invert-color')" title="Invert B/W" style="margin-left:5px;">◑</button>
-
-        <div class="color-picker-popover" v-if="showColorPicker">
-          <div class="color-grid">
-            <button v-for="c in presetColors" :key="c" class="color-swatch" :style="{ background: c }"
-              @click="$emit('update:aaTextColor', c); showColorPicker = false"></button>
-          </div>
-          <div class="color-slider-row">
-            <span class="label">HUE</span>
-            <input type="range" min="0" max="360" v-model="hueValue" @input="updateHue" class="hue-slider">
-          </div>
-          <div class="color-custom-row">
-            <span style="font-size:0.8rem; color:#666;">Custom:</span>
-            <input type="color" :value="aaTextColor" @input="$emit('update:aaTextColor', ($event.target as HTMLInputElement).value)" class="color-input">
-          </div>
-        </div>
+    <div class="header-left">
+      <h1 class="app-logo">Cozy Craft AA</h1>
+      <span class="app-version">v0.5</span>
+      
+      <div class="status-badge" :class="{ ready: isReady, processing: isProcessing }">
+        <span class="status-dot"></span>
+        {{ status }}
       </div>
+    </div>
+
+    <div class="header-right">
+      <button class="icon-btn" @click="$emit('toggle-config')" title="Configuration">⚙️</button>
+      <button class="icon-btn" @click="$emit('toggle-debug')" title="Debug Info">🐞</button>
     </div>
   </header>
 </template>
+
+<style scoped>
+.app-header {
+    height: 40px; background: #333; color: #eee;
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 0 15px; font-size: 0.9rem; user-select: none;
+    box-shadow: 0 2px 5px rgba(0,0,0,0.1); z-index: 100;
+}
+.header-left, .header-right { display: flex; align-items: center; gap: 15px; }
+.app-logo { font-size: 1rem; font-weight: bold; color: #e6b086; margin: 0; letter-spacing: 1px; }
+.app-version { font-size: 0.7rem; color: #888; background: #444; padding: 2px 6px; border-radius: 10px; }
+
+.status-badge { 
+    display: flex; align-items: center; gap: 6px; font-size: 0.75rem; 
+    color: #aaa; background: #222; padding: 3px 10px; border-radius: 12px; border: 1px solid #444;
+}
+.status-badge.ready { color: #fff; border-color: #555; }
+.status-badge.processing { color: #e6b086; border-color: #e6b086; }
+.status-dot { width: 8px; height: 8px; background: #666; border-radius: 50%; transition: background 0.3s; }
+.ready .status-dot { background: #4caf50; box-shadow: 0 0 5px #4caf50; }
+.processing .status-dot { background: #e6b086; animation: pulse 1s infinite; }
+
+.icon-btn { background: transparent; border: none; font-size: 1.1rem; cursor: pointer; opacity: 0.8; transition: opacity 0.2s; padding: 4px; }
+.icon-btn:hover { opacity: 1; transform: scale(1.1); }
+
+@keyframes pulse { 0% { opacity: 1; } 50% { opacity: 0.5; } 100% { opacity: 1; } }
+</style>

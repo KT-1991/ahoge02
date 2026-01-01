@@ -2,96 +2,101 @@ import { ref } from 'vue';
 import { LineArtProcessor } from '../utils/LineArtProcessor';
 
 declare const cv: any;
-//const BASE_URL = import.meta.env.BASE_URL;
 
 export function useLineArt() {
     // --- State ---
     const lineArtProcessor = new LineArtProcessor();
-    const rawLineArtCanvas = ref<HTMLCanvasElement | null>(null); // AIの生出力
-    const processedSource = ref<HTMLCanvasElement | null>(null);  // 最終的な加工済み画像
+    const rawLineArtCanvas = ref<HTMLCanvasElement | null>(null);
+    const processedSource = ref<HTMLCanvasElement | null>(null);
+    
+    // ★追加: 線画抽出中フラグ
+    const isExtracting = ref(false);
     
     // Settings
     const lineArtSettings = ref({
-        threshold: 128,  // 2値化しきい値
-        thickness: 0,    // 太さ (-1:細く, 0:そのまま, 1:太く)
+        threshold: 128,
+        thickness: 0,
         opacity: 100
     });
     const thinningLevel = ref(0);
-
-
 
     // --- Actions ---
     
     // 1. AIによる線画抽出 (anime2sketch)
     const extractLineArt = async (sourceImage: HTMLImageElement) => {
+        if (isExtracting.value) return; // 二重実行防止
+        
+        isExtracting.value = true; // ★開始
         try {
-            //const modelBuffer = await loadSplitModel('anime2sketch', 5);
-            //console.log(modelUrl)
             await lineArtProcessor.init(); 
-            //await lineArtProcessor.init('anime2sketch.onnx'); 
             const result = await lineArtProcessor.process(sourceImage);
             rawLineArtCanvas.value = result;
             
-            // 設定を初期値にリセット
-            lineArtSettings.value = { threshold: 200, thickness: 0, opacity: 100 };
-            
-            // 適用してプロセスチェーンを回す
+            // 設定を初期値にリセットして適用
+            lineArtSettings.value = { threshold: 128, thickness: 0, opacity: 100 };
             applyLineArtSettings(sourceImage);
-            return true;
+            
         } catch (e) {
-            console.error(e);
-            return false;
+            console.error('Line art extraction failed:', e);
+            alert('Failed to extract line art.');
+        } finally {
+            isExtracting.value = false; // ★終了
         }
     };
 
+    // 2. パラメータ調整 (OpenCV)
+    const applyLineArtSettings = (sourceImage: HTMLImageElement) => {
+        console.log(sourceImage);
+        if (!rawLineArtCanvas.value) {
+            processedSource.value = null;
+            return;
+        }
 
-    // 2. 線の太さ調整 (OpenCV Erode/Dilate)
-    const applyLineArtSettings = (sourceImage: HTMLImageElement | null) => {
-        if (!rawLineArtCanvas.value) return;
-
-        const w = rawLineArtCanvas.value.width;
-        const h = rawLineArtCanvas.value.height;
-        
-        const canvas = document.createElement('canvas');
-        canvas.width = w; canvas.height = h;
-        const ctx = canvas.getContext('2d')!;
-        ctx.drawImage(rawLineArtCanvas.value, 0, 0);
-        
-        const src = cv.imread(canvas);
+        const src = cv.imread(rawLineArtCanvas.value);
         const dst = new cv.Mat();
-        
-        // グレースケール & 2値化
-        cv.cvtColor(src, src, cv.COLOR_RGBA2GRAY);
-        cv.threshold(src, dst, lineArtSettings.value.threshold, 255, cv.THRESH_BINARY);
-        
-        // 太さ調整
-        const t = lineArtSettings.value.thickness;
-        if (t !== 0) {
-            const kSize = Math.abs(t) * 2 + 1;
-            const M = cv.Mat.ones(kSize, kSize, cv.CV_8U);
-            const anchor = new cv.Point(-1, -1);
-            if (t > 0) cv.erode(dst, dst, M, anchor, 1); // 太く (黒を広げる)
-            else cv.dilate(dst, dst, M, anchor, 1);      // 細く (白を広げる)
-            M.delete();
-        }
 
-        cv.imshow(canvas, dst);
-        src.delete(); dst.delete();
+        // グレースケール & 2値化
+        cv.cvtColor(src, dst, cv.COLOR_RGBA2GRAY);
         
-        // 次の工程（細線化）へ渡す
-        processSourceImage(canvas, sourceImage);
+        // Threshold (2値化)
+        // 反転させて処理しやすくする (線=白, 背景=黒)
+        cv.threshold(dst, dst, lineArtSettings.value.threshold, 255, cv.THRESH_BINARY_INV);
+
+        // Thickness (膨張・収縮)
+        const kSize = 3;
+        const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(kSize, kSize));
+        
+        if (lineArtSettings.value.thickness > 0) {
+            // 太くする (Dilate)
+            cv.dilate(dst, dst, kernel, new cv.Point(-1, -1), lineArtSettings.value.thickness);
+        } else if (lineArtSettings.value.thickness < 0) {
+            // 細くする (Erode)
+            cv.erode(dst, dst, kernel, new cv.Point(-1, -1), Math.abs(lineArtSettings.value.thickness));
+        }
+        
+        // 反転を戻す (線=黒, 背景=白)
+        cv.bitwise_not(dst, dst);
+
+        // アルファチャンネル追加してCanvasへ
+        // (省略: 表示用にprocessedSourceへ書き出し)
+        const outputCanvas = document.createElement('canvas');
+        outputCanvas.width = rawLineArtCanvas.value.width;
+        outputCanvas.height = rawLineArtCanvas.value.height;
+        cv.imshow(outputCanvas, dst);
+        processedSource.value = outputCanvas;
+
+        src.delete(); dst.delete(); kernel.delete();
     };
 
-    // 3. 最終プロセス（ThinningとSourceの決定）
-    // inputCanvasがあればそれを加工、なければ sourceImage or rawLineArt を使う
+    // 3. 背景透過処理 (Thinningも含む最終出力)
     const processSourceImage = (
         inputCanvas: HTMLCanvasElement | null, 
-        sourceImage: HTMLImageElement | null
+        sourceImage: HTMLImageElement
     ) => {
-        let source: HTMLImageElement | HTMLCanvasElement | null = inputCanvas;
+        let source: any = inputCanvas;
         
         if (!source) {
-            if (rawLineArtCanvas.value) source = rawLineArtCanvas.value;
+            if (rawLineArtCanvas.value) source = processedSource.value || rawLineArtCanvas.value;
             else source = sourceImage;
         }
         
@@ -111,7 +116,7 @@ export function useLineArt() {
             return;
         }
 
-        // OpenCVによる細線化 (Dilateで黒線を削る)
+        // OpenCVによる細線化
         const src = cv.imread(canvas);
         const dst = new cv.Mat();
 
@@ -125,18 +130,12 @@ export function useLineArt() {
 
         cv.imshow(canvas, dst);
         processedSource.value = canvas;
-
+        
         src.delete(); dst.delete(); M.delete();
     };
 
     return {
-        lineArtProcessor,
-        rawLineArtCanvas,
-        processedSource,
-        lineArtSettings,
-        thinningLevel,
-        extractLineArt,
-        applyLineArtSettings,
-        processSourceImage
+        rawLineArtCanvas, processedSource, lineArtSettings, thinningLevel, isExtracting, // ★isExtractingを追加
+        extractLineArt, applyLineArtSettings, processSourceImage
     };
 }

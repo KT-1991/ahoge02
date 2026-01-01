@@ -15,7 +15,8 @@ export function useAiGeneration() {
         useThinSpace: true, 
         safeMode: false,
         noiseGate: 0.3,
-        generationMode: 'hybrid' as 'hybrid' | 'accurate' 
+        generationMode: 'hybrid' as 'hybrid' | 'accurate' ,
+        bbsMode: false,
     });
     
     const allCharCandidates = ref<string[]>(Array.from(new Set(DEFAULT_CHARS.split(''))));
@@ -292,6 +293,174 @@ export function useAiGeneration() {
         } catch(err) { console.error(err); status.value = 'DB ERROR'; }
     };
 
+// ★修正: Padding(10px)を考慮して、描画位置と行を正しく合わせる
+    const generateRows = async (
+        canvas: HTMLCanvasElement,       
+        paintLayer: HTMLCanvasElement | null, 
+        transform: { scale: number, rotation: number, x: number, y: number },
+        currentAA: string,
+        minY: number,
+        maxY: number
+    ): Promise<string> => {
+        if (!isReady.value) return currentAA;
+        if (canvas.width === 0 || canvas.height === 0) return currentAA;
+
+        // ★追加: テキストエリアのパディング (CSSと合わせる)
+        const PADDING_TOP = 10;
+
+        // 1. 合成用キャンバスの準備
+        const workCanvas = document.createElement('canvas');
+        workCanvas.width = canvas.width;
+        workCanvas.height = canvas.height;
+        const ctx = workCanvas.getContext('2d', { willReadFrequently: true })!;
+
+        ctx.fillStyle = '#ffffff';
+        ctx.fillRect(0, 0, workCanvas.width, workCanvas.height);
+
+        ctx.save();
+        ctx.translate(transform.x, transform.y);
+        ctx.rotate(transform.rotation * Math.PI / 180);
+        ctx.scale(transform.scale, transform.scale);
+        
+        ctx.drawImage(canvas, 0, 0);
+        
+        if (paintLayer && paintLayer.width > 0 && paintLayer.height > 0) {
+            ctx.drawImage(paintLayer, 0, 0);
+        }
+        ctx.restore();
+
+        // 2. 行ごとの処理準備
+        const lines = currentAA.split('\n');
+        const lineHeight = 16;
+        
+        // ★修正: パディング分を引いてから行インデックスを計算
+        // (クリック位置 minY が 15px の場合、Padding 10px を引くと 5px → Row 0 と判定される)
+        const startRow = Math.max(0, Math.floor((minY - PADDING_TOP - lineHeight) / lineHeight));
+        const endRow = Math.ceil((maxY - PADDING_TOP + lineHeight) / lineHeight);
+
+        while (lines.length <= endRow) lines.push('');
+
+        const measureCanvas = document.createElement('canvas');
+        const measureCtx = measureCanvas.getContext('2d')!;
+        measureCtx.font = `16px "${customFontName.value}"`;
+
+        // 3. 指定範囲の行だけAI生成
+        for (let row = startRow; row <= endRow; row++) {
+            // ★修正: 画像を参照する座標にパディングを足す
+            // Row 0 は 画像の Y=10px から始まる
+            const y = row * lineHeight + PADDING_TOP; 
+            
+            if (y < 0 || y >= canvas.height) continue;
+
+            const rowCanvas = document.createElement('canvas');
+            rowCanvas.width = canvas.width; 
+            rowCanvas.height = 32;
+            const rowCtx = rowCanvas.getContext('2d', { willReadFrequently: true })!;
+
+            // 中心座標 (行の高さ16pxの中央 + Y座標)
+            const centerY = y + 8;
+            const cropSrcY = centerY - 16; // 32px切り出しの開始位置
+            
+            rowCtx.fillStyle = '#ffffff';
+            rowCtx.fillRect(0, 0, rowCanvas.width, rowCanvas.height);
+
+            // workCanvasから切り出し
+            rowCtx.drawImage(workCanvas, 0, cropSrcY, canvas.width, 32, 0, 0, canvas.width, 32);
+
+            let features: Float32Array;
+            if (engine.mode === 'classifier') {
+                 features = FeatureExtractor.generate9ChInput(rowCanvas, lineWeight.value, 0);
+            } else {
+                 const rCtx = rowCanvas.getContext('2d')!;
+                 const imgData = rCtx.getImageData(0, 0, rowCanvas.width, rowCanvas.height);
+                 const srcMat = (window as any).cv.matFromImageData(imgData);
+                 const skeletonMat = FeatureExtractor.skeletonize(srcMat);
+                 features = FeatureExtractor.generate9ChInputFromSkeleton(skeletonMat);
+                 srcMat.delete(); skeletonMat.delete();
+            }
+
+            let rowMaskData: Uint8ClampedArray | null = null;
+            if (paintLayer && paintLayer.width > 0 && paintLayer.height > 0) {
+                const maskCvs = document.createElement('canvas');
+                maskCvs.width = canvas.width; 
+                maskCvs.height = 32;
+                const mCtx = maskCvs.getContext('2d', { willReadFrequently: true })!;
+                
+                mCtx.drawImage(paintLayer, 0, cropSrcY, canvas.width, 32, 0, 0, canvas.width, 32);
+                rowMaskData = mCtx.getImageData(0, 0, maskCvs.width, 32).data;
+            }
+
+            const resultObj = await engine.solveLine(
+                features,
+                canvas.width,
+                targetCharBlue.value,
+                targetCharRed.value,
+                rowMaskData,
+                centerY, 
+                config.value.generationMode,
+                measureCtx,
+                null 
+            );
+
+            lines[row] = resultObj.text;
+        }
+
+        return lines.join('\n');
+    };
+
+
+    // ★追加: 候補リストを取得するアクション
+    const getCandidates = async (
+        canvas: HTMLCanvasElement,
+        paintBuffer: HTMLCanvasElement | null,
+        imageTransform: any,
+        caretPixelX: number,
+        lineY: number
+    ) => {
+        // 1行切り出し
+        const rowCanvas = document.createElement('canvas');
+        rowCanvas.width = canvas.width; rowCanvas.height = 32;
+        const rowCtx = rowCanvas.getContext('2d', { willReadFrequently: true })!;
+        const srcY = Math.max(0, lineY - 8);
+        const dstY = (lineY - 8 < 0) ? (8 - lineY) : 0;
+        rowCtx.drawImage(canvas, 0, srcY, canvas.width, 32, 0, dstY, canvas.width, 32);
+
+        let features: Float32Array;
+        
+        // モード別前処理
+        if (engine.mode === 'classifier') {
+             features = FeatureExtractor.generate9ChInput(rowCanvas, lineWeight.value, 0);
+        } else {
+             const ctx = rowCanvas.getContext('2d')!;
+             const imgData = ctx.getImageData(0, 0, rowCanvas.width, rowCanvas.height);
+             const srcMat = (window as any).cv.matFromImageData(imgData);
+             const skeletonMat = FeatureExtractor.skeletonize(srcMat);
+             features = FeatureExtractor.generate9ChInputFromSkeleton(skeletonMat);
+             srcMat.delete(); skeletonMat.delete();
+        }
+
+        // マスク処理
+        let rowMaskData: Uint8ClampedArray | null = null;
+        if (paintBuffer) {
+            const maskCvs = document.createElement('canvas');
+            maskCvs.width = canvas.width; maskCvs.height = 32;
+            const mCtx = maskCvs.getContext('2d', { willReadFrequently: true })!;
+            mCtx.save();
+            mCtx.translate(imageTransform.x, imageTransform.y - srcY);
+            mCtx.rotate(imageTransform.rotation * Math.PI / 180);
+            mCtx.scale(imageTransform.scale, imageTransform.scale);
+            mCtx.drawImage(paintBuffer, 0, 0);
+            mCtx.restore();
+            rowMaskData = mCtx.getImageData(0, 0, maskCvs.width, 32).data;
+        }
+
+        // 新設したgetCandidatesAtを呼ぶ
+        return await engine.getCandidatesAt(
+            features, rowCanvas.width, caretPixelX, 
+            rowMaskData, targetCharBlue.value, targetCharRed.value
+        );
+    };
+
     return {
         engine, status, isReady, isProcessing, config, allCharCandidates,
         customFontName, 
@@ -300,6 +469,6 @@ export function useAiGeneration() {
         charSetMode, toggleCharSetMode,
         initEngine, updateAllowedChars, runGeneration, 
         getSuggestion, rebuildDb, 
-        toggleAllowedChar 
+        toggleAllowedChar, getCandidates, generateRows
     };
 }

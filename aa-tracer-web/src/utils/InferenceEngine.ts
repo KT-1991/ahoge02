@@ -750,7 +750,7 @@ export class InferenceEngine {
              centerInk = sum / (32*32);
           }
 
-          const threshold = (this.mode === 'vector') ? 30 : 15;
+          const threshold = (this.mode === 'vector') ? 0 : 0;
           if (centerInk < threshold) {
               if (i === 0) {
                   resultText += " ";
@@ -803,5 +803,61 @@ export class InferenceEngine {
       });
       scored.sort((a, b) => b.selectionScore - a.selectionScore);
       return scored[0];
+  }
+
+  // ★追加: 指定位置の候補リスト(Top-K)を返すメソッド
+  async getCandidatesAt(
+      lineFeatures: Float32Array, imgWidth: number, startX: number, 
+      maskData: Uint8ClampedArray | null = null,
+      blueChar: string = ':', redChar: string = '/'
+  ): Promise<{ char: string, score: number }[]> {
+      const centerX = startX + 6; // suggestTextと同様の中心補正
+      
+      // マスクによる強制文字チェック
+      if (maskData) {
+          const y = 16; 
+          const color = this.getColorAt(maskData, imgWidth, centerX, y);
+          if (color === 'blue') return [{ char: blueChar, score: 100 }];
+          if (color === 'red') return [{ char: redChar, score: 100 }];
+      }
+
+      const patch = this.extractPatch(lineFeatures, imgWidth, centerX);
+      
+      // インク量チェック
+      let centerInk = 0;
+      if (this.mode === 'vector') {
+          const cy = 16; const cx = 16;
+          for(let dy=-6; dy<6; dy++) for(let dx=-6; dx<6; dx++) {
+              centerInk += patch[((cy+dy)*32 + (cx+dx)) * 9]!;
+          }
+      } else {
+          let sum = 0; for(let k=0; k<32*32; k++) sum += patch[k*9]!; 
+          centerInk = sum / (32*32);
+      }
+
+      // インクが薄すぎる場合はスペースを返す
+      const threshold = (this.mode === 'vector') ? 0 : 0;
+      if (centerInk < threshold) {
+          return [{ char: ' ', score: 100 }];
+      }
+
+      // 推論実行
+      const tensor = this.toTensor(patch, 1, 32, 32, 9);
+      if (!this.session) return [];
+      const res = await this.session.run({ input_image: tensor });
+      const keys = Object.keys(res);
+      const outputData = res[keys[0]!]!.data as Float32Array;
+
+      let candidates: any[] = [];
+      
+      if (this.mode === 'classifier') {
+          candidates = this.getMaskedTopKClasses(outputData, 20); // Top 20取得
+      } else {
+          // Vector検索
+          candidates = this.searchVectorDb(outputData, 20);
+      }
+
+      // { char, score } の配列にして返す
+      return candidates.map(c => ({ char: c.char, score: c.score }));
   }
 }
