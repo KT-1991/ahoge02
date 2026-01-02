@@ -39,6 +39,7 @@ const emit = defineEmits<{
   (e: 'invert-color'): void;
   (e: 'open-color-picker', target: 'main' | 'sub'): void;
   (e: 'show-timelapse'): void;
+  (e: 'show-privacy'): void;
 }>();
 
 // Popover States
@@ -184,6 +185,7 @@ const toggleMenu = (menu: string) => {
         <span class="info-item">{{ cursorInfo.px }} px</span><div class="divider-v"></div>
         <span class="info-item">Ln {{ cursorInfo.row + 1 }}, Col {{ cursorInfo.col }}</span><div class="divider-v"></div>
         <span class="info-item">{{ cursorInfo.charCount }} chars</span>
+        <a href="#" @click.prevent="$emit('show-privacy')" class="footer-link">Privacy Policy</a>
     </div>
 
     <div v-if="showFileMenu || showEditMenu || showCopyMenu || showViewMenu" 

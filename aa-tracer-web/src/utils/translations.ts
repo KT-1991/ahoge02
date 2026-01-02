@@ -1,7 +1,7 @@
 // テキスト定義ファイル
 export const translations = {
     // --- Header & General ---
-    app_title: { en: "AAtelier", ja: "AAtelier" },
+    app_title: { en: "AHoge Editor ML", ja: "AHoge Editor ML" },
     status_ready: { en: "READY", ja: "準備完了" },
     status_processing: { en: "PROCESSING...", ja: "処理中..." },
     status_loading: { en: "LOADING...", ja: "読込中..." },

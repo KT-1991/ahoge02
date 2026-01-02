@@ -42,6 +42,7 @@ const emit = defineEmits<{
   (e: 'update:thinning-level', val: number): void;
   (e: 'update:noise-gate', val: number): void;
   (e: 'update:generation-mode', val: string): void;
+  (e: 'load-sample'): void; // ★追加
 }>();
 
 const onLoadFile = (e: Event) => {
@@ -61,7 +62,11 @@ const onLoadFile = (e: Event) => {
           <input type="file" @change="onLoadFile" accept="image/*" hidden>
         </label>
       </div>
-      
+      <div class="control-row">
+         <button class="studio-btn outline w-100" @click="$emit('load-sample')" :disabled="isProcessing">
+            🖼️ Try Sample Image
+         </button>
+      </div>
       <div class="control-row" v-if="sourceImage">
         <button class="studio-btn outline w-100" @click="$emit('extract-lineart')" :disabled="isExtracting">
             {{ t('img_extract_btn') }}

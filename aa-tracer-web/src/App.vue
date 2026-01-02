@@ -19,6 +19,12 @@ import AaTimelapseModal from './components/AaTimelapseModal.vue';
 
 import { useI18n } from './composables/useI18n'; // ★追加
 import AaHelpModal from './components/AaHelpModal.vue'; // ★インポート
+import AaAboutModal from './components/AaAboutModal.vue'; // ★インポート
+import AaPrivacyModal from './components/AaPrivacyModal.vue'; // ★インポート
+
+const showPrivacyModal = ref(false); // ★状態追加
+
+const showAboutModal = ref(false); // ★状態追加
 
 const showHelpModal = ref(false); // ★状態追加
 
@@ -721,6 +727,21 @@ const onFlowPaintEnd = async (rect: { minY: number, maxY: number }) => {
     // 線が増えるたびに推論結果が更新されていく。これでOK。
 };
 
+// ★追加: サンプル画像を読み込む関数
+const loadSampleImage = async () => {
+    try {
+        const response = await fetch('/sample.png');
+        if (!response.ok) throw new Error('Sample image not found');
+        const blob = await response.blob();
+        const file = new File([blob], "sample.png", { type: "image/png" });
+        onImageLoaded(file); // 既存の読み込みロジックを再利用
+        project.showToastMessage('Sample Image Loaded');
+    } catch (e) {
+        console.error(e);
+        project.showToastMessage('Failed to load sample.png');
+    }
+};
+
 watch(() => ai.isReady.value, (ready) => { if (ready) project.showToastMessage("AI Engine Ready! Let's craft."); });
 watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighlight(true); });
 </script>
@@ -738,6 +759,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
     @toggle-debug="showDebugModal=true" 
     @toggle-config="showConfigModal=true"
     @toggle-help="showHelpModal = true"
+    @toggle-about="showAboutModal = true"
     />
 
     <div class="workspace">
@@ -778,6 +800,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                 @update:generation-mode="val => ai.config.value.generationMode = val as any"
                 @update:target-char-blue="val => ai.targetCharBlue.value = val"
                 @update:target-char-red="val => ai.targetCharRed.value = val"
+                @load-sample="loadSampleImage"
             />
         </div>
 
@@ -814,6 +837,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
         @invert-color="invertColor"
         @open-color-picker="openColorPicker"
         @show-timelapse="showTimelapseModal = true"
+        @show-privacy="showPrivacyModal = true"
         />
 
         <div class="modal-backdrop" v-if="showColorPickerModal" @click.self="showColorPickerModal = false">
@@ -843,7 +867,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
             </div>
         </div>
     </div>
-
+    <AaPrivacyModal :is-visible="showPrivacyModal" @close="showPrivacyModal = false" />
     <AaGridOverlay :is-active="showGrid" :project-a-as="projectAAs" :current-index="currentAAIndex"
       @close="showGrid = false" @select="idx => { currentAAIndex = idx; showGrid = false; }" @add="addNewPage" @delete="deletePage" />
 
@@ -928,6 +952,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
           </div>
         </div>
     </div>
+    <AaAboutModal :is-visible="showAboutModal" @close="showAboutModal = false" />
 
     <div class="toast-notification" :class="{ active: project.showToast.value }">{{ project.toastMessage.value }}</div>
     <input id="fileInput" type="file" hidden @change="project.onLoadFile(($event.target as HTMLInputElement).files![0]!)" accept=".txt,.mlt,.ast">

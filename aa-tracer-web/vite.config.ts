@@ -2,11 +2,41 @@
 import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import { viteStaticCopy } from 'vite-plugin-static-copy'
+import { VitePWA } from 'vite-plugin-pwa' // ★追加
 
 export default defineConfig(({ command }) => {
   return {
   plugins: [
     vue(),
+    VitePWA({
+      registerType: 'autoUpdate',
+      includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
+      manifest: {
+        name: 'AAtelier',
+        short_name: 'AAtelier',
+        description: 'AI-Powered ASCII Art Editor',
+        theme_color: '#Fdfbf7', // アプリの背景色に合わせる
+        background_color: '#Fdfbf7',
+        display: 'standalone', // アプリのように表示
+        icons: [
+          {
+            src: 'apple-touch-icon.png', // 192x192兼用として使用(本来はpwa-192x192.png等を作るのがベスト)
+            sizes: '192x192',
+            type: 'image/png'
+          },
+          {
+            src: 'apple-touch-icon.png', // 512x512兼用 (拡大されるが簡易対応として)
+            sizes: '512x512',
+            type: 'image/png'
+          }
+        ]
+      },
+      workbox: {
+        // 大きなファイル（ONNXモデルやフォント）もキャッシュ対象にする設定
+        maximumFileSizeToCacheInBytes: 50 * 1024 * 1024, // 10MB
+        globPatterns: ['**/*.{js,css,html,ico,png,svg,ttf,onnx,json}']
+      }
+    }),
     viteStaticCopy({
         targets: [
           {
