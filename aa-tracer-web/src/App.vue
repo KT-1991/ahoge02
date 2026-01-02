@@ -92,6 +92,36 @@ const editingCategory = computed(() => categories.value.find(c => c.id === editi
 
 const fontStack = computed(() => ai.customFontName.value === 'Saitamaar' ? `'MSP_Parallel', 'Saitamaar'` : `'${ai.customFontName.value}'`);
 
+// ★追加: ドラッグアンドドロップの状態管理
+const isDragOver = ref(false);
+
+const onDragEnter = (e: DragEvent) => {
+    e.preventDefault();
+    isDragOver.value = true;
+};
+
+const onDragOver = (e: DragEvent) => {
+    e.preventDefault(); // これがないとdropイベントが発火しない
+    isDragOver.value = true;
+};
+
+const onDropFile = (e: DragEvent) => {
+    e.preventDefault();
+    isDragOver.value = false;
+    
+    const files = e.dataTransfer?.files;
+    if (files && files.length > 0) {
+        const file = files[0]!;
+        if (file.type.startsWith('image/')) {
+            // 既存の画像読み込み関数を再利用
+            onImageLoaded(file);
+            project.showToastMessage('Image Loaded via Drop');
+        } else {
+            project.showToastMessage('Please drop an image file');
+        }
+    }
+};
+
 // --- Methods ---
 
 // ★状態を保存する関数
@@ -160,7 +190,7 @@ const loadSession = async () => {
         if (data.categories) categories.value = data.categories;
 
         // 3. AI設定復元
-        if (data.fontName) ai.customFontName.value = data.fontName;
+        //if (data.fontName) ai.customFontName.value = data.fontName;
         if (data.allowedChars) {
             ai.config.value.allowedChars = data.allowedChars;
             ai.updateAllowedChars();
@@ -696,7 +726,11 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
 </script>
 
 <template>
-  <div class="app-root" :style="{ '--aa-text-color': aaTextColor, '--font-aa': fontStack }">
+  <div class="app-root" :style="{ '--aa-text-color': aaTextColor, '--font-aa': fontStack }"
+    @dragenter="onDragEnter"
+     @dragover="onDragOver"
+     @dragleave="isDragOver = false"
+     @drop="onDropFile">
     <AppHeader 
     :status="ai.status.value" 
     :is-ready="ai.isReady.value" 
@@ -920,7 +954,15 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
         Processing Image...
       </div>
     </Transition>
-  
+  <Transition name="fade">
+        <div v-if="isDragOver" class="drop-overlay">
+            <div class="drop-message">
+                <div class="drop-icon">📂</div>
+                <h2>Drop Image Here</h2>
+                <p>Release to load image</p>
+            </div>
+        </div>
+    </Transition>
   </div>
 </template>
 
@@ -1168,4 +1210,40 @@ textarea.aa-textarea.box-mode-active::selection { background-color: transparent 
 .fade-enter-from, .fade-leave-to { opacity: 0; }
 .fade-overlay-enter-active, .fade-overlay-leave-active { transition: opacity 0.6s ease; }
 .fade-overlay-enter-from, .fade-overlay-leave-to { opacity: 0; }
+.drop-overlay {
+    position: fixed;
+    top: 0; left: 0; width: 100vw; height: 100vh;
+    background: rgba(230, 176, 134, 0.9); /* アプリのテーマカラー(accent-primary)に合わせる */
+    z-index: 99999; /* 最前面 */
+    display: flex; align-items: center; justify-content: center;
+    pointer-events: none; /* イベントを透過させない（dropイベントは親で受けるのでOKだが、デザイン上はnoneで良い場合も） */
+    /* ただし、@dropは親の.app-rootで受けるため、pointer-events: noneにしておくと
+       オーバーレイの下にある要素が反応してしまう可能性がある。
+       今回は .app-root で受けるので、オーバーレイ自体がイベントをブロックしないように none にするか、
+       あるいはオーバーレイ自体に @drop をつける手もある。
+       
+       一番確実なのは、オーバーレイ自体は pointer-events: none にして、
+       .app-root で drop を受け取る構成です。
+    */
+}
+
+.drop-message {
+    text-align: center;
+    color: white;
+    background: rgba(255, 255, 255, 0.2);
+    padding: 40px;
+    border-radius: 16px;
+    border: 4px dashed white;
+    animation: pulse 1.5s infinite;
+}
+
+.drop-icon { font-size: 4rem; margin-bottom: 10px; }
+.drop-message h2 { margin: 0; font-size: 2rem; }
+.drop-message p { margin: 10px 0 0; font-size: 1.2rem; opacity: 0.9; }
+
+@keyframes pulse {
+    0% { transform: scale(1); }
+    50% { transform: scale(1.05); }
+    100% { transform: scale(1); }
+}
 </style>

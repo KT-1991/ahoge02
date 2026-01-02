@@ -149,6 +149,11 @@ export class InferenceEngine {
       if (!this.charWidthCache.has(' ')) {
           this.charWidthCache.set(' ', ctx.measureText(' '.repeat(50)).width / 50);
       }
+      // 全角スペースがリストになくても幅を確保しておく（BBSモードでのフォールバック用）
+      if (!this.charWidthCache.has('　')) {
+           const w = ctx.measureText('　'.repeat(10)).width / 10;
+           this.charWidthCache.set('　', w > 0 ? w : 16.0);
+      }
   }
 
   async updateDatabase(fontUrl: string | null, charList: string, fontName: string) {
@@ -309,7 +314,8 @@ export class InferenceEngine {
     blueChar: string, redChar: string, maskData: Uint8ClampedArray | null = null, 
     _yOffset: number = 0, generationMode: 'hybrid' | 'accurate' = 'hybrid', 
     measureCtx: CanvasRenderingContext2D | null = null,
-    prevBottomEdge: Float32Array | null = null 
+    prevBottomEdge: Float32Array | null = null ,
+    bbsMode: boolean = false
   ): Promise<{ text: string, bottomEdge: Float32Array }> {
     
     const currentBottomEdge = new Float32Array(width);
@@ -338,13 +344,11 @@ export class InferenceEngine {
                     if (color === 'red') forcedChar = redChar;
                 }
                 if (forcedChar) {
-                    // 幅の取得を強化: キャッシュになければ計測、計測不可なら文字数×8px
                     let w = this.charWidthCache.get(forcedChar);
                     if (w === undefined) {
                         if (measureCtx) {
                             w = measureCtx.measureText(forcedChar).width;
                         } else {
-                            // キャッシュもなく計測もできない場合のフォールバック
                             w = forcedChar.length * (this.charWidthCache.get(' ') || 8.0);
                         }
                     }
@@ -368,8 +372,15 @@ export class InferenceEngine {
                 }
                 const baseSignal = Math.max(sumSkeleton/(32*32), sumDensity/(32*32));
                 if (baseSignal < 15) { 
-                    const w = this.charWidthCache.get(' ') || 8.0;
-                    newBeams.push({ x: b.x + w, cost: b.cost, text: b.text + ' ', lastChar: ' ' });
+                    //const w = this.charWidthCache.get(' ') || 8.0;
+                    // BBSモード対応: 空白エリアでもルールを適用
+                    let spaceChar = ' ';
+                    if (bbsMode && (b.text === "" || b.lastChar === ' ')) {
+                        spaceChar = '　';
+                    }
+                    const spaceW = this.charWidthCache.get(spaceChar) || (spaceChar==='　' ? 16.0 : 8.0);
+                    
+                    newBeams.push({ x: b.x + spaceW, cost: b.cost, text: b.text + spaceChar, lastChar: spaceChar });
                     continue;
                 }
 
@@ -385,20 +396,31 @@ export class InferenceEngine {
                 const candidates = searchCache.get(cacheKey)!;
 
                 for (const cand of candidates) {
+                    let charToUse = cand.char;
+                    // ★修正: BBS互換モードなら置換を試みる
+                    if (bbsMode && charToUse === ' ') {
+                        // 行頭 or 連続スペースなら全角スペース化
+                        if (b.text === "" || b.lastChar === ' ') {
+                            charToUse = '　';
+                        }
+                    }
+
                     let visualCost = (10.0 - cand.score); 
                     if (visualCost < 0) visualCost = 0;
-                    const nextText = b.text + cand.char;
+                    
+                    const nextText = b.text + charToUse;
                     let nextX = b.x;
                     if (generationMode === 'accurate' && measureCtx) {
                         nextX = measureCtx.measureText(nextText).width;
                     } else {
-                        const w = this.charWidthCache.get(cand.char) || cand.width;
+                        // 置換後の文字幅を使用する
+                        const w = this.charWidthCache.get(charToUse) || cand.width || 8.0;
                         nextX = b.x + w;
                         if (generationMode === 'hybrid' && measureCtx && nextText.length % 10 === 0) {
                             nextX = measureCtx.measureText(nextText).width;
                         }
                     }
-                    newBeams.push({ x: nextX, cost: b.cost + visualCost, text: nextText, lastChar: cand.char });
+                    newBeams.push({ x: nextX, cost: b.cost + visualCost, text: nextText, lastChar: charToUse });
                 }
             }
             newBeams.sort((a, b) => a.cost - b.cost);
@@ -448,7 +470,14 @@ export class InferenceEngine {
             if (color === 'red') forcedChar = redChar;
         }
         if (forcedChar) {
-            const w = this.charWidthCache.get(forcedChar) || 8.0;
+            let w = this.charWidthCache.get(forcedChar);
+            if (w === undefined) {
+                if (tempCtx) {
+                    w = tempCtx.measureText(forcedChar).width;
+                } else {
+                    w = forcedChar.length * 8.0;
+                }
+            }
             newBeams.push({ x: b.x + w, cost: b.cost, text: b.text + forcedChar, lastChar: forcedChar });
             continue; 
         }
@@ -473,8 +502,6 @@ export class InferenceEngine {
         } else {
             if (!searchCache.has(xCenterInt)) {
                 const tensor = this.toTensor(patch, 1, 32, 32, 9);
-                
-                // ★修正: Vector Modeなら必ず encoderSession を使用する
                 const sess = this.encoderSession || this.session;
                 
                 if (sess) {
@@ -497,7 +524,7 @@ export class InferenceEngine {
                     const reranked = await this.rerankCandidates(patch, baseCands, tempCtx, prevPatchBottom);
                     searchCache.set(xCenterInt, reranked);
                 } else {
-                    candidates = []; // セッションがない場合
+                    candidates = []; 
                 }
             }
             if (searchCache.has(xCenterInt)) {
@@ -506,26 +533,32 @@ export class InferenceEngine {
         }
 
         for (const cand of candidates) {
+            let char = cand.char;
+            
+            // ★修正: BBS互換モードなら置換を試みる
+            if (bbsMode && char === ' ') {
+                if (b.text === "" || b.lastChar === ' ') {
+                    char = '　';
+                }
+            }
+
             const scoreToUse = (cand.finalScore !== undefined) ? cand.finalScore : cand.score;
             let visualCost = (1.0 - scoreToUse) * 10.0;
             if (visualCost < 0) visualCost = 0;
 
-            const char = cand.char;
             const charPixels = cand.pixelCount || 0;
 
-            if (char !== ' ') {
+            if (char !== ' ' && char !== '　') {
                 if (totalDensity < 40 && charPixels > 40) visualCost += 5.0;
                 else if (totalDensity > 80 && charPixels < 20) visualCost += 1.0;
             }
 
-            let w = spaceWidth;
-            if (char !== ' ') {
-                w = this.charWidthCache.get(char) || 10.0;
-            }
+            // 幅計算 (置換後の文字に対して行う)
+            let w = (char === ' ') ? spaceWidth : (this.charWidthCache.get(char) || 10.0);
             if (w < 4.0) w = 4.0;
 
             let transCost = 0;
-            if (char === b.lastChar && char !== ' ' && char !== '─') {
+            if (char === b.lastChar && char !== ' ' && char !== '　' && char !== '─') {
                 transCost = 0.5;
             }
             const nextX = b.x + w;
@@ -752,7 +785,6 @@ export class InferenceEngine {
 
           const tensor = this.toTensor(patch, 1, 32, 32, 9);
           
-          // ★修正: Vector Modeなら encoderSession を使う
           const sess = (this.mode === 'vector' && this.encoderSession) ? this.encoderSession : this.session;
           if (!sess) break;
           
@@ -833,7 +865,6 @@ export class InferenceEngine {
 
       const tensor = this.toTensor(patch, 1, 32, 32, 9);
       
-      // ★修正: Vector Modeなら encoderSession を使う
       const sess = (this.mode === 'vector' && this.encoderSession) ? this.encoderSession : this.session;
       if (!sess) return [];
       

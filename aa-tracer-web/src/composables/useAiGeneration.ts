@@ -16,7 +16,7 @@ export function useAiGeneration() {
         safeMode: false,
         noiseGate: 0.3,
         generationMode: 'hybrid' as 'hybrid' | 'accurate',
-        bbsMode: false,
+        bbsMode: true,
     });
     
     const allCharCandidates = ref<string[]>(Array.from(new Set(DEFAULT_CHARS.split(''))));
@@ -74,16 +74,15 @@ export function useAiGeneration() {
                     const loadedChars = engine.getLoadedCharList();
                     let charsToUse = loadedChars;
 
-                    if (loadedChars.length <= 1) { // ほぼ空ならロード失敗とみなしてfetch
+                    if (loadedChars.length <= 1) { 
                         charsToUse = await fetchDefaultChars();
                     }
                     
-                    // 文字リストの正規化（重複排除など）
                     const newSet = Array.from(new Set((' ' + charsToUse).split(''))).join('');
                     
                     config.value.allowedChars = newSet;
-                    allCharCandidates.value = Array.from(newSet); // ★重要: 候補リストも同期
-                    engine.updateAllowedChars(newSet); // ★重要: エンジンに確実に適用
+                    allCharCandidates.value = Array.from(newSet);
+                    engine.updateAllowedChars(newSet);
 
                     status.value = 'READY';
                     isReady.value = true;
@@ -207,15 +206,22 @@ export function useAiGeneration() {
                     const resultObj = await engine.solveLine(
                         lineFeat, w, targetCharBlue.value, targetCharRed.value, 
                         rowMaskData, y, config.value.generationMode, measureCtx,
-                        prevLineBottomEdge 
+                        prevLineBottomEdge, config.value.bbsMode
                     );
                     
-                    result += resultObj.text + "\n";
+                    // ★修正: 生成された各行の右端（行末）の空白をトリム
+                    const trimmedLine = resultObj.text.replace(/[ 　]+$/, '');
+                    result += trimmedLine + "\n";
+                    
                     prevLineBottomEdge = resultObj.bottomEdge;
 
                     aaOutputRef.value = result;
                     await new Promise(r => setTimeout(r, 0));
                 }
+                
+                // ★修正: 生成完了後、テキスト全体の末尾（下側）の空白・改行をトリム
+                aaOutputRef.value = result.replace(/[\n 　]+$/, '');
+
                 status.value = 'DONE';
             } catch (err) { 
                 console.error(err); status.value = 'ERROR'; 
@@ -225,6 +231,7 @@ export function useAiGeneration() {
         }, 50);
     };
     
+    // ... (getSuggestion などは変更なし) ...
     const getSuggestion = async (
         canvas: HTMLCanvasElement,
         paintBuffer: HTMLCanvasElement | null,
@@ -232,6 +239,8 @@ export function useAiGeneration() {
         caretPixelX: number,
         lineY: number
     ): Promise<string> => {
+        // (省略: 元のコードのまま)
+        // ...
         const rowCanvas = document.createElement('canvas');
         rowCanvas.width = canvas.width; rowCanvas.height = 32;
         const rowCtx = rowCanvas.getContext('2d', { willReadFrequently: true })!;
@@ -369,10 +378,11 @@ export function useAiGeneration() {
 
             const resultObj = await engine.solveLine(
                 features, canvas.width, targetCharBlue.value, targetCharRed.value,
-                rowMaskData, centerY, config.value.generationMode, measureCtx, null 
+                rowMaskData, centerY, config.value.generationMode, measureCtx, null , config.value.bbsMode
             );
 
-            lines[row] = resultObj.text;
+            // ★修正: 生成された各行の行末をトリム（フローブラシ時も同様）
+            lines[row] = resultObj.text.replace(/[ 　]+$/, '');
         }
         return lines.join('\n');
     };
@@ -423,7 +433,6 @@ export function useAiGeneration() {
         );
     };
 
-    // ★修正: 設定リセット時に allCharCandidates も同期させる
     const resetConfig = async () => {
         customFontName.value = 'Saitamaar';
         config.value.safeMode = false;
@@ -432,13 +441,9 @@ export function useAiGeneration() {
         
         const defaultChars = await fetchDefaultChars();
         
-        // 1. エンジンを更新
         engine.updateAllowedChars(defaultChars);
         
-        // 2. Configを更新
         config.value.allowedChars = defaultChars;
-        
-        // 3. ★重要: 全文字リストの控えも更新 (これを忘れると charSetMode 切り替えでおかしくなる)
         allCharCandidates.value = Array.from(new Set(defaultChars.split('')));
         
         await rebuildDb(null, 'Saitamaar');
