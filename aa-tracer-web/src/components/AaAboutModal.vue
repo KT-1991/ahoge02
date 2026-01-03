@@ -21,9 +21,9 @@ const appVersion = "v1.0.0"; // 将来的にpackage.jsonから読むことも可
       <div class="about-content">
         <div class="logo-section">
             <div class="app-icon">
-                <span class="icon-text">AA</span>
+                <img src="/apple-touch-icon.png" alt="AHoge Editor Icon" class="app-icon" />
             </div>
-            <h1 class="app-name">AAtelier</h1>
+            <h1 class="app-name">AHoge Editor ML</h1>
             <p class="app-version">{{ t('about_version') }} {{ appVersion }}</p> </div>
 
         <div class="desc-section">
@@ -31,13 +31,13 @@ const appVersion = "v1.0.0"; // 将来的にpackage.jsonから読むことも可
         </div>
 
         <div class="links-section">
-            <a href="https://github.com/あなたのID/リポジトリ名" target="_blank" class="link-card">
+            <a href="https://github.com/KT-1991/ahoge02" target="_blank" class="link-card">
                 <span class="icon">📦</span>
                 <div class="link-info">
                     <span class="link-title">{{ t('about_gh_title') }}</span> <span class="link-desc">{{ t('about_gh_desc') }}</span> </div>
             </a>
             
-            <a href="https://twitter.com/あなたのID" target="_blank" class="link-card">
+            <a href="https://twitter.com/hanako20210620" target="_blank" class="link-card">
                 <span class="icon">🐦</span>
                 <div class="link-info">
                     <span class="link-title">{{ t('about_x_title') }}</span> <span class="link-desc">{{ t('about_x_desc') }}</span> </div>

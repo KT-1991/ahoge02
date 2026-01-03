@@ -36,6 +36,8 @@ const { t } = useI18n(); // ★追加
 
         <div class="help-section">
           <h3>{{ t('help_tips_title') }}</h3> <ul>
+            <li v-html="t('help_tips_line')"></li>
+            <li v-html="t('help_tips_hatching')"></li>
             <li v-html="t('help_tips_safe')"></li>
             <li v-html="t('help_tips_opacity')"></li>
             <li v-html="t('help_tips_box')"></li>

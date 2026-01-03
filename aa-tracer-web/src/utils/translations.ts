@@ -147,11 +147,11 @@ export const translations = {
     },
 
     // --- About Modal ---
-    about_title: { en: "ℹ️ About AAtelier", ja: "ℹ️ AAtelier について" },
+    about_title: { en: "ℹ️ About AHoge Editor ML", ja: "ℹ️ AHoge Editor ML について" },
     about_version: { en: "Version", ja: "バージョン" },
     about_desc: { 
-        en: "AAtelier is a next-gen AI-powered ASCII Art editor.<br>Create artisanal AA simply by tracing images.", 
-        ja: "AAtelier (アートリエ) は、AIを搭載した次世代のアスキーアートエディタです。<br>画像をなぞるだけで、誰でも簡単に職人技のようなAAを作成できます。" 
+        en: "AHoge Editor ML is a next-gen AI-powered ASCII Art editor.", 
+        ja: "AHoge Editor ML は、AIを搭載したアスキーアートエディタです。" 
     },
     
     // Links
@@ -162,7 +162,7 @@ export const translations = {
     
     // Footer
     about_powered: { en: "Powered by", ja: "使用技術" },
-    about_rights: { en: "AAtelier Project. All rights reserved.", ja: "AAtelier Project. All rights reserved." },
+    about_rights: { en: "AHoge Editor Project. All rights reserved.", ja: "AHoge Editor Project. All rights reserved." },
 // --- Help Modal ---
     help_title: { en: "📚 Help & Shortcuts", ja: "📚 ヘルプとショートカット" },
     
@@ -181,11 +181,19 @@ export const translations = {
     help_kb_title: { en: "⌨️ Keyboard Shortcuts", ja: "⌨️ キーボードショートカット" },
     help_kb_box: { en: "Box Selection (Trace Editor)", ja: "矩形選択 (トレース画面)" },
     help_kb_nudge: { en: "Nudge Cursor", ja: "カーソル微調整 (Nudge)" },
-    help_kb_tab: { en: "Insert Zenkaku Space / Accept Ghost", ja: "全角スペース / ゴースト確定" },
+    help_kb_tab: { en: "Paint / Accept Ghost", ja: "塗り確定 / ゴースト確定" },
     help_kb_ctx: { en: "Context Menu / AI Suggestion", ja: "矩形貼り付け / AI提案" },
 
     // Tips
     help_tips_title: { en: "✨ Tips", ja: "✨ ヒント" },
+    help_tips_hatching: { 
+        en: "<b>Paint:</b> Specify the areas to be painted using the Bucket Tool or similar tools.", 
+        ja: "<b>塗りの指定:</b> バケツツールなどで塗る箇所を指定することができます。自動生成はもちろん、Tabで塗れます。" 
+    },
+    help_tips_line: { 
+        en: "<b>Line:</b> Since the line extraction is basic, using external coloring tools might produce higher-quality AA results.", 
+        ja: "<b>線画:</b> 線画抽出は簡易的なので、外部の塗り絵ツールなどを使ったものの方が高精度にAA化できるかもしれません。" 
+    },
     help_tips_safe: { 
         en: "<b>Safe Mode:</b> Use only standard characters visible on all devices.", 
         ja: "<b>セーフモード:</b> どの環境でもズレにくい標準的な文字のみを使用します。" 
