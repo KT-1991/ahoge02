@@ -1,5 +1,8 @@
 <script setup lang="ts">
 import { ref, onUnmounted, nextTick, computed, watch, onMounted } from 'vue';
+import { useI18n } from '../composables/useI18n'; // ★追加
+
+const { t } = useI18n(); // ★追加
 
 const props = defineProps<{
   viewMode: 'single' | 'split';
@@ -135,26 +138,33 @@ const handleCursorMove = (e: Event, source: 'trace' | 'text') => {
     if (source === 'trace') emit('click-text', e as MouseEvent);
     updateSyncCaretAndInfo(target);
 };
-
 // 1px Nudge Logic
 const checkBbsConstraint = (z: number, h: number, isLineStart: boolean): boolean => {
     if (isLineStart) {
+        // 行頭: 半角スペースで開始してはいけない
+        // つまり、全角スペースが0個なら、半角スペースも0個でなければならない（半角のみはNG）
         if (z === 0 && h > 0) return false; 
+        // 交互配置 (Z H Z H...) するために、Hの数はZ以下でなければならない
         return h <= z; 
     } else {
+        // 行頭以外: 交互配置 (H Z H Z H...) するために、Hの数は Z+1 以下でなければならない
         return h <= z + 1;
     }
 };
+
 const buildBbsSafeString = (z: number, h: number, isLineStart: boolean): string => {
     let res = '';
     let zenCount = z;
     let hanCount = h;
+    
     if (isLineStart) {
+        // 行頭: 必ず全角から始める (Z H Z H...)
         while (zenCount > 0 || hanCount > 0) {
             if (zenCount > 0) { res += '　'; zenCount--; }
             if (hanCount > 0) { res += ' '; hanCount--; }
         }
     } else {
+        // 行頭以外: 半角から始めてスペース効率を最大化する (H Z H Z...)
         while (zenCount > 0 || hanCount > 0) {
             if (hanCount > 0) { res += ' '; hanCount--; }
             if (zenCount > 0) { res += '　'; zenCount--; }
@@ -162,16 +172,22 @@ const buildBbsSafeString = (z: number, h: number, isLineStart: boolean): string 
     }
     return res;
 };
+
 const nudgeCursor = (direction: -1 | 1, useThinSpace: boolean, isBbsMode: boolean) => {
+  // ★修正: BBSモード時は Thin Space を強制的に無効化
+  const enableThin = useThinSpace && !isBbsMode;
+
   let target = document.activeElement as HTMLTextAreaElement;
   if (target !== traceTextareaRef.value && target !== textTextareaRef.value) {
       target = activeEditor.value === 'text' ? textTextareaRef.value! : traceTextareaRef.value!;
   }
   if (!target) return;
+  
   const start = target.selectionStart;
   const end = target.selectionEnd;
   const content = props.aaOutput;
   if (start !== end) return;
+  
   let i = start - 1;
   while (i >= 0) {
     const c = content[i];
@@ -181,34 +197,42 @@ const nudgeCursor = (direction: -1 | 1, useThinSpace: boolean, isBbsMode: boolea
   const spaceStart = i + 1;
   const isLineStart = (spaceStart === 0 || content[spaceStart - 1] === '\n');
   const currentSpaces = content.substring(spaceStart, start);
+  
   if (currentSpaces.length === 0 && direction === -1) return;
+  
   const ctx = document.createElement('canvas').getContext('2d')!;
   ctx.font = `16px ${props.fontStack}`;
   const wZen = ctx.measureText('　').width;
   const wHan = ctx.measureText(' ').width;
   const wThin = ctx.measureText('\u2009').width;
+  
   let currentWidth = 0;
   for (const char of currentSpaces) {
     if (char === '　') currentWidth += wZen;
     else if (char === ' ') currentWidth += wHan;
     else if (char === '\u2009') currentWidth += wThin;
   }
+  
   let found = false;
   let combination = { zen: 0, han: 0, thin: 0 };
   const EPSILON = 0.1;
+  
   for (let offset = 1; offset <= 30; offset++) {
     const targetW = currentWidth + (direction * offset);
     if (targetW < 0) continue;
+    
     const maxZ = Math.floor((targetW + EPSILON) / wZen);
     for (let z = maxZ; z >= 0; z--) {
         const remZ = targetW - (z * wZen);
-        if (useThinSpace) {
+        
+        // ★修正: enableThin フラグを使用
+        if (enableThin) {
             const h = Math.floor((remZ + EPSILON) / wHan);
             const remH = remZ - (h * wHan);
             const t = Math.round(remH / wThin);
+            
             const calcW = (z * wZen) + (h * wHan) + (t * wThin);
             if (Math.abs(calcW - targetW) < EPSILON) {
-                if (isBbsMode && !checkBbsConstraint(z, h, isLineStart)) continue;
                 combination = { zen: z, han: h, thin: t };
                 found = true;
                 break;
@@ -216,6 +240,7 @@ const nudgeCursor = (direction: -1 | 1, useThinSpace: boolean, isBbsMode: boolea
         } else {
             const h = Math.round(remZ / wHan);
             const calcW = (z * wZen) + (h * wHan);
+            
             if (Math.abs(calcW - targetW) < EPSILON) {
                 if (isBbsMode) {
                     if (!checkBbsConstraint(z, h, isLineStart)) continue;
@@ -228,17 +253,22 @@ const nudgeCursor = (direction: -1 | 1, useThinSpace: boolean, isBbsMode: boolea
     }
     if (found) break;
   }
+  
   if (!found) return;
+  
   let newStr = '';
-  if (isBbsMode && !useThinSpace) {
+  // ★修正: BBSモードなら必ず安全な構築ロジックを使用
+  if (isBbsMode) {
       newStr = buildBbsSafeString(combination.zen, combination.han, isLineStart);
   } else {
       newStr += '　'.repeat(combination.zen);
       newStr += ' '.repeat(combination.han);
       newStr += '\u2009'.repeat(combination.thin);
   }
+  
   const newContent = content.substring(0, spaceStart) + newStr + content.substring(start);
   emit('update:aaOutput', newContent);
+  
   nextTick(() => {
     target.focus();
     const newCaretPos = spaceStart + newStr.length;
@@ -408,17 +438,92 @@ const getBoxSelectionText = () => {
     }
     return result;
 };
+// pasteTextAsBox 関数全体を置き換え
 const pasteTextAsBox = (text: string) => {
     const ctx = document.createElement('canvas').getContext('2d')!;
     ctx.font = `16px ${props.fontStack}`;
-    let startRow = 0; let targetX = 0;
-    if (boxStart.value) { startRow = Math.min(boxStart.value.row, boxEnd.value?.row || boxStart.value.row); targetX = Math.min(boxStart.value.x, boxEnd.value?.x || boxStart.value.x); } 
-    else if (traceTextareaRef.value) { const caret = traceTextareaRef.value.selectionStart; const textBefore = props.aaOutput.substring(0, caret); const linesBefore = textBefore.split('\n'); startRow = linesBefore.length - 1; const lineText = linesBefore[linesBefore.length - 1]; targetX = ctx.measureText(lineText!).width; }
-    const pasteLines = text.split('\n'); const currentLines = props.aaOutput.split('\n');
+    
+    // スペースの幅を計測
+    const wZen = ctx.measureText('　').width;
+    const wHan = ctx.measureText(' ').width;
+
+    let startRow = 0; 
+    let targetX = 0;
+
+    // 1. 貼り付け開始位置 (行番号とX座標) を決定
+    if (boxStart.value) { 
+        startRow = Math.min(boxStart.value.row, boxEnd.value?.row || boxStart.value.row); 
+        targetX = Math.min(boxStart.value.x, boxEnd.value?.x || boxStart.value.x); 
+    } else if (traceTextareaRef.value) { 
+        const caret = traceTextareaRef.value.selectionStart; 
+        const textBefore = props.aaOutput.substring(0, caret); 
+        const linesBefore = textBefore.split('\n'); 
+        startRow = linesBefore.length - 1; 
+        const lineText = linesBefore[linesBefore.length - 1]; 
+        targetX = ctx.measureText(lineText!).width; 
+    }
+
+    const pasteLines = text.split('\n'); 
+    const currentLines = props.aaOutput.split('\n');
+
+    // 2. 行数が足りない場合は空行を追加
     while (currentLines.length < startRow + pasteLines.length) currentLines.push('');
-    for (let i = 0; i < pasteLines.length; i++) { const r = startRow + i; const line = currentLines[r] || ''; const ins = pasteLines[i]; const col = getColFromVisualX(ctx, line, targetX); let pre = ''; if (line.length < col) pre = line + '　'.repeat(Math.ceil((col - line.length))); else pre = line.substring(0, col); const postIndex = col + ins!.length; const post = line.length > postIndex ? line.substring(postIndex) : ''; currentLines[r] = pre + ins + post; }
-    const newVal = currentLines.join('\n'); emit('update:aaOutput', newVal);
-    nextTick(() => { if (traceTextareaRef.value) { traceTextareaRef.value.focus(); emit('input-text', { target: traceTextareaRef.value } as any); emit('paste-text', { clipboardData: null } as any); } });
+
+    // 3. 各行への貼り付け処理
+    for (let i = 0; i < pasteLines.length; i++) { 
+        const r = startRow + i; 
+        const line = currentLines[r] || ''; 
+        const ins = pasteLines[i]; 
+        
+        // ★修正: 行の現在の幅（ピクセル）を計測
+        const currentLineWidth = ctx.measureText(line).width;
+        
+        let pre = '';
+        let post = '';
+
+        if (currentLineWidth < targetX) {
+            // A. 行がターゲット位置より短い場合 -> 隙間をスペースで埋める
+            const diff = targetX - currentLineWidth;
+            let padding = '';
+            let remaining = diff;
+            
+            // 全角スペースで埋められるだけ埋める
+            const zenCount = Math.floor(remaining / wZen);
+            padding += '　'.repeat(zenCount);
+            remaining -= zenCount * wZen;
+            
+            // 残りを半角スペースで埋める（四捨五入で近い個数に）
+            const hanCount = Math.round(remaining / wHan);
+            padding += ' '.repeat(hanCount);
+            
+            pre = line + padding;
+            // postは無し（行末に追加するため）
+        } else {
+            // B. 行がターゲット位置まである場合 -> その位置で分割
+            const col = getColFromVisualX(ctx, line, targetX);
+            pre = line.substring(0, col);
+            
+            // 矩形貼り付けなので、貼り付ける文字数分だけ元の文字を上書き(消去)する
+            // (元の挙動を維持: ins.length 分だけスキップ)
+            const postIndex = col + ins!.length;
+            if (postIndex < line.length) {
+                post = line.substring(postIndex);
+            }
+        }
+        
+        currentLines[r] = pre + ins + post; 
+    }
+
+    const newVal = currentLines.join('\n'); 
+    emit('update:aaOutput', newVal);
+    
+    nextTick(() => { 
+        if (traceTextareaRef.value) { 
+            traceTextareaRef.value.focus(); 
+            emit('input-text', { target: traceTextareaRef.value } as any); 
+            emit('paste-text', { clipboardData: null } as any); 
+        } 
+    });
 };
 const insertAtCursor = (text: string, targetEditor: 'trace' | 'text' | null) => {
   const target = targetEditor === 'text' ? textTextareaRef.value : traceTextareaRef.value;
@@ -461,8 +566,7 @@ onUnmounted(() => stopResizePane());
   <main class="editor-stack" ref="editorStackRef" :style="{ flexDirection: splitDirection === 'horizontal' ? 'column' : 'row' }">
     <div class="editor-card trace-card" :style="{ flex: viewMode === 'single' ? '1' : `0 0 ${tracePaneRatio * 100}%`, order: isLayoutSwapped ? 3 : 1 }" @click="$emit('active-editor', 'trace')">
       <div class="card-header">
-        <input :value="currentAaTitle" @input="$emit('update:currentAaTitle', ($event.target as HTMLInputElement).value)" class="aa-title-input" placeholder="AA Title" />
-        <div class="card-actions"></div>
+        <input :value="currentAaTitle" @input="$emit('update:currentAaTitle', ($event.target as HTMLInputElement).value)" class="aa-title-input" :placeholder="t('ws_title_ph')" /> <div class="card-actions"></div>
       </div>
       <div class="aa-canvas-wrapper" @scroll="$emit('scroll', $event)">
         <div class="canvas-scroll-area" :style="containerStyle">
@@ -488,25 +592,42 @@ onUnmounted(() => stopResizePane());
           
           <textarea ref="traceTextareaRef" class="aa-textarea" :class="{ 'box-mode-active': isDragBoxMode || boxSelectionRects.length > 0 }" :value="aaOutput"
                     @input="handleInput" @click="handleCursorMove($event, 'trace')" @keydown="emit('keydown-text', $event); handleCursorMove($event, 'trace')" @keypress="emit('keypress-text', $event)" @keyup="handleCursorMove($event, 'trace')" @focus="handleCursorMove($event, 'trace'); emit('focus-text', 'trace')" @mousedown="onMouseDownTextarea($event, 'trace')" @mousemove="onMouseMoveTextarea($event, 'trace')" @mouseup="onMouseUpTextarea" @paste="$emit('paste-text', $event)" @contextmenu.prevent="$emit('request-context-menu', $event, $event.target as any)" 
-                    placeholder="Type or Drag Image Here..."
-                    :style="{ color: aaTextColor, pointerEvents: isPaintingActive ? 'none' : 'auto', opacity: 1, zIndex: 20 }"></textarea>
-        </div>
+                    :placeholder="t('ws_ph_trace')" 
+                    :style="{ color: aaTextColor, pointerEvents: isPaintingActive ? 'none' : 'auto', opacity: 1, zIndex: 20 }"></textarea> </div>
       </div>
     </div>
     
     <div v-show="viewMode === 'split'" class="resize-handle" @mousedown.prevent="startResizePane" :class="{ active: isResizingPane, 'handle-v': splitDirection === 'vertical' }" :style="{ order: 2 }"><div class="handle-bar"></div></div>
     
     <div v-show="viewMode === 'split'" class="editor-card text-card" :style="{ flex: 1, order: isLayoutSwapped ? 1 : 3 }" @click="$emit('active-editor', 'text')">
-      <div class="aa-canvas-wrapper">
-        <div class="aa-highlight-layer" v-html="highlightedHTML"></div>
-        <div class="sync-caret" v-show="activeEditor === 'trace'" :style="syncCaretStyle"></div>
-        <textarea ref="textTextareaRef" class="aa-textarea" :value="aaOutput"
-                  @input="handleInput" @click="handleCursorMove($event, 'text')" @keyup="handleCursorMove($event, 'text')" @focus="handleCursorMove($event, 'text'); emit('focus-text', 'text')" @contextmenu.prevent="$emit('request-context-menu', $event, $event.target as any)"
-                  style="color: #222222; background: transparent;"></textarea>
+      <div class="aa-canvas-wrapper" @scroll="$emit('scroll', $event)">
+        <div class="canvas-scroll-area" :style="containerStyle">
+            <div class="aa-highlight-layer" v-html="highlightedHTML"></div>
+            <div class="sync-caret" v-show="activeEditor === 'trace'" :style="syncCaretStyle"></div>
+            
+            <textarea ref="textTextareaRef" class="aa-textarea" :value="aaOutput"
+                      @input="handleInput" @click="handleCursorMove($event, 'text')" @keyup="handleCursorMove($event, 'text')" @focus="handleCursorMove($event, 'text'); emit('focus-text', 'text')" @contextmenu.prevent="$emit('request-context-menu', $event, $event.target as any)"
+                      @keydown="emit('keydown-text', $event); handleCursorMove($event, 'text')"
+                      @keypress="emit('keypress-text', $event)"
+                      style="color: #222222; background: transparent; z-index: 20;"></textarea>
+        </div>
       </div>
     </div>
     
-    <div v-if="contextMenuVisible" class="context-menu" :style="{ top: contextMenuPos.y + 'px', left: contextMenuPos.x + 'px' }" @click.stop><div class="menu-header"><span>Actions</span><button class="menu-close-btn" @click="$emit('close-context-menu')">×</button></div><div v-if="contextCandidates.length > 0" class="candidate-grid"><button v-for="(cand, i) in contextCandidates" :key="i" class="cand-btn" :title="`Score: ${cand.score.toFixed(2)}`" @click="$emit('select-candidate', cand.char)">{{ cand.char === ' ' ? 'SPC' : cand.char }}</button></div><div v-else class="menu-no-cands">No AI suggestions</div><div class="menu-actions"><button class="menu-action-btn" @click="performBoxPaste"><span class="icon">📋</span> 矩形貼り付け (Rect Paste)</button></div><div class="menu-backdrop" @click="$emit('close-context-menu')"></div></div>
+    <div v-if="contextMenuVisible" class="context-menu" :style="{ top: contextMenuPos.y + 'px', left: contextMenuPos.x + 'px' }" @click.stop>
+        <div class="menu-header">
+            <span>{{ t('ws_actions') }}</span> <button class="menu-close-btn" @click="$emit('close-context-menu')">×</button>
+        </div>
+        <div v-if="contextCandidates.length > 0" class="candidate-grid">
+            <button v-for="(cand, i) in contextCandidates" :key="i" class="cand-btn" :title="`${t('ws_score')}: ${cand.score.toFixed(2)}`" @click="$emit('select-candidate', cand.char)"> {{ cand.char === ' ' ? 'SPC' : cand.char }}
+            </button>
+        </div>
+        <div v-else class="menu-no-cands">{{ t('ws_no_cands') }}</div> <div class="menu-actions">
+            <button class="menu-action-btn" @click="performBoxPaste">
+                <span class="icon">📋</span> {{ t('ws_rect_paste') }} </button>
+        </div>
+        <div class="menu-backdrop" @click="$emit('close-context-menu')"></div>
+    </div>
   </main>
 </template>
 

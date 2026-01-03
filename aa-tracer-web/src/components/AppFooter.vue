@@ -1,8 +1,8 @@
 <script setup lang="ts">
 import { ref } from 'vue';
-import { useI18n } from '../composables/useI18n'; // ★追加: 翻訳機能
+import { useI18n } from '../composables/useI18n';
 
-const { t } = useI18n(); // ★追加
+const { t } = useI18n();
 
 const props = defineProps<{
   currentAaIndex: number;
@@ -26,7 +26,8 @@ const emit = defineEmits<{
   (e: 'undo'): void;
   (e: 'redo'): void;
   (e: 'trigger-load', enc: string): void;
-  (e: 'save', format: 'AST'|'MLT', enc: 'SJIS'|'UTF8'): void;
+  // ★修正: 'TXT' を追加
+  (e: 'save', format: 'AST'|'MLT'|'TXT', enc: 'SJIS'|'UTF8'): void;
   (e: 'copy', mode: 'normal'|'bbs'): void;
   (e: 'show-export'): void;
   (e: 'apply-edit', type: string): void;
@@ -89,15 +90,21 @@ const toggleMenu = (menu: string) => {
           
           <div class="divider-h"></div>
           
-          <div class="menu-label">{{ t('file_save_ast') }}</div>
-          <div class="menu-item" @click="$emit('save', 'AST', 'UTF8'); closeAllMenus()">💾 Save as UTF-8</div>
-          <div class="menu-item" @click="$emit('save', 'AST', 'SJIS'); closeAllMenus()">💾 Save as Shift-JIS</div>
+          <div class="menu-label">{{ t('file_save_txt') }}</div>
+          <div class="menu-item" @click="$emit('save', 'TXT', 'UTF8'); closeAllMenus()">💾 Save Current (UTF-8)</div>
+          <div class="menu-item" @click="$emit('save', 'TXT', 'SJIS'); closeAllMenus()">💾 Save Current (Shift-JIS)</div>
           
           <div class="divider-h"></div>
 
+          <div class="menu-label">{{ t('file_save_ast') }}</div>
+          <div class="menu-item" @click="$emit('save', 'AST', 'UTF8'); closeAllMenus()">📜 Save Project (UTF-8)</div>
+          <div class="menu-item" @click="$emit('save', 'AST', 'SJIS'); closeAllMenus()">📜 Save Project (Shift-JIS)</div>
+
+          <div class="divider-h"></div>
+
           <div class="menu-label">{{ t('file_save_mlt') }}</div>
-          <div class="menu-item" @click="$emit('save', 'MLT', 'UTF8'); closeAllMenus()">📦 Save All (UTF-8)</div>
-          <div class="menu-item" @click="$emit('save', 'MLT', 'SJIS'); closeAllMenus()">📦 Save All (Shift-JIS)</div>
+          <div class="menu-item" @click="$emit('save', 'MLT', 'UTF8'); closeAllMenus()">📦 Save Project (UTF-8)</div>
+          <div class="menu-item" @click="$emit('save', 'MLT', 'SJIS'); closeAllMenus()">📦 Save Project (Shift-JIS)</div>
 
           <div class="divider-h"></div>
           
@@ -107,32 +114,22 @@ const toggleMenu = (menu: string) => {
 
       <div class="dropdown-container">
         <button class="text-btn" :class="{ active: showEditMenu }" @click.stop="toggleMenu('edit')">{{ t('menu_edit') }}</button>
-<div v-if="showEditMenu" class="popover-menu">
+        <div v-if="showEditMenu" class="popover-menu">
           <div class="menu-item" @click="$emit('undo'); closeAllMenus()">{{ t('edit_undo') }}</div>
           <div class="menu-item" @click="$emit('redo'); closeAllMenus()">{{ t('edit_redo') }}</div>
-          
           <div class="divider-h"></div>
-          
           <div class="menu-item" @click="$emit('paste-box'); closeAllMenus()">{{ t('edit_paste_box') }}</div>
-          
           <div class="divider-h"></div>
-          
           <div class="menu-item" @click="$emit('apply-edit', 'add-start-space'); closeAllMenus()">{{ t('edit_indent') }}</div>
           <div class="menu-item" @click="$emit('apply-edit', 'trim-start'); closeAllMenus()">{{ t('edit_unindent') }}</div>
-          
           <div class="divider-h"></div>
-
           <div class="menu-item" @click="$emit('apply-edit', 'add-end-space'); closeAllMenus()">{{ t('edit_add_end_space') }}</div>
           <div class="menu-item" @click="$emit('apply-edit', 'del-last-char'); closeAllMenus()">{{ t('edit_del_last') }}</div>
           <div class="menu-item" @click="$emit('apply-edit', 'trim-end'); closeAllMenus()">{{ t('edit_trim_end') }}</div>
-
           <div class="divider-h"></div>
-
           <div class="menu-item" @click="$emit('apply-edit', 'remove-empty'); closeAllMenus()">{{ t('edit_rm_empty') }}</div>
           <div class="menu-item" @click="$emit('apply-edit', 'align-right'); closeAllMenus()">{{ t('edit_align_right') }}</div>
-          
           <div class="divider-h"></div>
-          
           <div class="menu-item danger" @click="$emit('delete'); closeAllMenus()">{{ t('edit_delete_page') }}</div>
         </div>
       </div>
@@ -194,6 +191,7 @@ const toggleMenu = (menu: string) => {
 </template>
 
 <style scoped>
+/* スタイルは変更なし */
 .app-footer { height: 35px; background: #fdfdfd; border-top: 1px solid #ddd; display: flex; align-items: center; justify-content: space-between; padding: 0 10px; font-size: 0.85rem; user-select: none; color: #444; position: relative; z-index: 200; overflow: visible !important; }
 .footer-group { display: flex; align-items: center; gap: 8px; }
 .footer-center { display: flex; align-items: center; gap: 4px; position: absolute; left: 50%; transform: translateX(-50%); z-index: 300; pointer-events: auto; overflow: visible !important; }
@@ -222,5 +220,7 @@ const toggleMenu = (menu: string) => {
 .color-sq.main { top: 0; left: 0; z-index: 21; }
 .swap-mini-btn { background: transparent; border: none; cursor: pointer; padding: 0; color: #666; display: flex; align-items: center; justify-content: center; opacity: 0.7; width: 16px; height: 16px; }
 .swap-mini-btn:hover { opacity: 1; color: #333; }
+.footer-link { text-decoration: none; color: #888; font-size: 0.75rem; margin-left: 10px; }
+.footer-link:hover { text-decoration: underline; color: #555; }
 @keyframes slideUp { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 </style>

@@ -14,10 +14,13 @@ export const translations = {
     
     // File Menu Items
     file_open: { en: "📂 Open File...", ja: "📂 ファイルを開く..." },
-    file_save_ast: { en: "💾 Save Text (.txt)", ja: "💾 テキスト保存 (.txt)" },
-    file_save_mlt: { en: "📦 Save Project (.mlt)", ja: "📦 プロジェクト保存 (.mlt)" },
     file_export: { en: "📤 Export Image...", ja: "📤 画像書き出し..." },
     
+// ★修正: 3つの保存形式それぞれにラベルを定義
+    file_save_txt: { en: "💾 Save Current (.txt)", ja: "💾 現在のAAを保存 (.txt)" },
+    file_save_ast: { en: "📜 Save Project (.ast)", ja: "📜 プロジェクト保存 (.ast)" },
+    file_save_mlt: { en: "📦 Save Project (.mlt)", ja: "📦 プロジェクト保存 (.mlt)" },
+
     // Edit Menu Items
     edit_undo: { en: "↩ Undo (Ctrl+Z)", ja: "↩ 元に戻す (Ctrl+Z)" },
     edit_redo: { en: "↪ Redo (Ctrl+Y)", ja: "↪ やり直し (Ctrl+Y)" },
@@ -87,7 +90,132 @@ export const translations = {
     // Misc
     btn_close: { en: "Close", ja: "閉じる" },
     msg_saved: { en: "Saved!", ja: "保存しました" },
-    msg_copied: { en: "Copied!", ja: "コピーしました" }
+    msg_copied: { en: "Copied!", ja: "コピーしました" },
+
+    // --- Export Modal ---
+    exp_title: { en: "📤 Export Image for SNS", ja: "📤 SNS用画像書き出し" },
+    exp_preview_hint: { en: "Preview looks easier to read than actual output due to scaling.", ja: "※プレビューは縮小表示されているため、実際よりきれいに見える場合があります。" },
+    
+    // Theme Section
+    exp_theme_title: { en: "Theme & Color", ja: "テーマと色" },
+    exp_theme_white: { en: "⚪ White BG", ja: "⚪ 白背景" },
+    exp_theme_dark: { en: "⚫ Dark BG", ja: "⚫ 黒背景" },
+    exp_theme_trans: { en: "▦ Transparent", ja: "▦ 透過" },
+    exp_text_override: { en: "Text Color (Override)", ja: "文字色 (上書き)" },
+
+    // Layout Section
+    exp_layout_title: { en: "Layout & Quality", ja: "レイアウトと品質" },
+    exp_padding: { en: "Padding (Margin)", ja: "余白 (Padding)" },
+    exp_scale: { en: "Scale (Resolution)", ja: "解像度 (Scale)" },
+    exp_scale_hint: { en: "Higher scale is better for modern smartphones.", ja: "スマホで見る場合は 2x 以上がおすすめです。" },
+
+    // Actions
+    exp_share_x: { en: "Share to X", ja: "X (Twitter) でシェア" },
+    exp_download: { en: "⬇️ Download PNG Image", ja: "⬇️ PNG画像を保存" },
+    exp_copy_notice: { en: "Image Copied! Paste (Ctrl+V) it on X.", ja: "画像をコピーしました！Xの投稿画面で貼り付けてください。" },
+    exp_copy_fail: { en: "Could not copy image automatically. Please download it instead.", ja: "画像の自動コピーに失敗しました。ダウンロード機能をご利用ください。" },
+
+    // --- Workspace (Editor) ---
+    ws_title_ph: { en: "AA Title", ja: "AAのタイトル" },
+    ws_actions: { en: "Actions", ja: "操作" },
+    ws_no_cands: { en: "No AI suggestions", ja: "AI候補なし" },
+    ws_rect_paste: { en: "📋 Rect Paste", ja: "📋 矩形貼り付け" },
+    ws_ph_trace: { en: "Type or Drag Image Here...", ja: "ここに文字を入力するか、画像をドラッグ..." },
+    
+    // Context Menu Scores
+    ws_score: { en: "Score", ja: "スコア" },
+
+    // --- Privacy Modal ---
+    priv_title: { en: "🔒 Privacy Policy", ja: "🔒 プライバシーポリシー" },
+    
+    priv_sec1_title: { en: "1. Analytics", ja: "1. アクセス解析について" },
+    priv_sec1_desc: { 
+        en: "We use <b>Google Analytics</b> to improve our service. Data is collected anonymously and does not identify individuals.", 
+        ja: "当サイトでは、サービスの向上のために <b>Google Analytics</b> を使用しています。これらは匿名で収集され、個人を特定するものではありません。" 
+    },
+    
+    priv_sec2_title: { en: "2. Data Storage", ja: "2. データの保存について" },
+    priv_sec2_desc: { 
+        en: "Your AA drafts and settings are saved in your browser's <b>Local Storage</b>. They are never sent to external servers.", 
+        ja: "作成中のAAや設定データは、お使いのブラウザの <b>Local Storage</b> に保存されます。これらが外部のサーバーに送信されることはありません。" 
+    },
+    
+    priv_sec3_title: { en: "3. Image Processing", ja: "3. 画像処理について" },
+    priv_sec3_desc: { 
+        en: "All image loading and AI processing happens entirely <b>within your browser (client-side)</b>. Your images are never uploaded to our servers, so please use with confidence.", 
+        ja: "画像の読み込みやAIによる変換処理は、すべて <b>お客様のブラウザ内 (クライアントサイド)</b> で行われます。画像データが開発者のサーバー等にアップロードされることは一切ありませんので、安心してご利用ください。" 
+    },
+
+    // --- About Modal ---
+    about_title: { en: "ℹ️ About AAtelier", ja: "ℹ️ AAtelier について" },
+    about_version: { en: "Version", ja: "バージョン" },
+    about_desc: { 
+        en: "AAtelier is a next-gen AI-powered ASCII Art editor.<br>Create artisanal AA simply by tracing images.", 
+        ja: "AAtelier (アートリエ) は、AIを搭載した次世代のアスキーアートエディタです。<br>画像をなぞるだけで、誰でも簡単に職人技のようなAAを作成できます。" 
+    },
+    
+    // Links
+    about_gh_title: { en: "GitHub Repository", ja: "GitHub リポジトリ" },
+    about_gh_desc: { en: "Source code & Issues", ja: "ソースコード・不具合報告" },
+    about_x_title: { en: "Developer's X", ja: "開発者の X (Twitter)" },
+    about_x_desc: { en: "Follow for updates", ja: "更新情報をフォロー" },
+    
+    // Footer
+    about_powered: { en: "Powered by", ja: "使用技術" },
+    about_rights: { en: "AAtelier Project. All rights reserved.", ja: "AAtelier Project. All rights reserved." },
+// --- Help Modal ---
+    help_title: { en: "📚 Help & Shortcuts", ja: "📚 ヘルプとショートカット" },
+    
+    // Flow Brush
+    help_flow_title: { en: "🖌️ Flow Brush (Image Tab)", ja: "🖌️ フローブラシ (画像タブ)" },
+    help_flow_desc: { 
+        en: "Draw lines on the canvas. When you release the mouse, AI converts your strokes into ASCII Art instantly.", 
+        ja: "キャンバス上で線を引くと、マウスを離した瞬間にAIがストロークの流れに沿ってAAを生成します。" 
+    },
+    help_action_drag: { en: "Drag", ja: "ドラッグ" },
+    help_action_draw: { en: "Draw Line", ja: "線を引く" },
+    help_action_release: { en: "Release", ja: "離す" },
+    help_action_gen: { en: "Generate AA", ja: "AA生成" },
+
+    // Shortcuts
+    help_kb_title: { en: "⌨️ Keyboard Shortcuts", ja: "⌨️ キーボードショートカット" },
+    help_kb_box: { en: "Box Selection (Trace Editor)", ja: "矩形選択 (トレース画面)" },
+    help_kb_nudge: { en: "Nudge Cursor", ja: "カーソル微調整 (Nudge)" },
+    help_kb_tab: { en: "Insert Zenkaku Space / Accept Ghost", ja: "全角スペース / ゴースト確定" },
+    help_kb_ctx: { en: "Context Menu / AI Suggestion", ja: "矩形貼り付け / AI提案" },
+
+    // Tips
+    help_tips_title: { en: "✨ Tips", ja: "✨ ヒント" },
+    help_tips_safe: { 
+        en: "<b>Safe Mode:</b> Use only standard characters visible on all devices.", 
+        ja: "<b>セーフモード:</b> どの環境でもズレにくい標準的な文字のみを使用します。" 
+    },
+    help_tips_opacity: { 
+        en: "<b>Trace Opacity:</b> Lower opacity to see your AA clearly over the image.", 
+        ja: "<b>不透明度:</b> トレース画像の不透明度を下げると、作成したAAが見やすくなります。" 
+    },
+    help_tips_box: { 
+        en: "<b>Box Paste:</b> Use \"Rect Paste\" in Edit menu to paste AA blocks without breaking layout.", 
+        ja: "<b>矩形貼り付け:</b> 編集メニューの「矩形貼り付け」を使うと、レイアウトを崩さずにAAの一部を移植できます。" 
+    },
+
+    // --- Timelapse Modal ---
+    time_title: { en: "⏱️ Timelapse Replay", ja: "⏱️ タイムラプス再生" },
+    time_rendering: { en: "Rendering Video...", ja: "動画書き出し中..." },
+    time_warn: { en: "Do not close window", ja: "ウィンドウを閉じないでください" },
+    
+    // Controls
+    time_play: { en: "▶ Play", ja: "▶ 再生" },
+    time_pause: { en: "⏸ Pause", ja: "⏸ 一時停止" },
+    time_rewind: { en: "Rewind", ja: "巻き戻し" },
+    time_speed: { en: "Speed:", ja: "速度:" },
+    time_save: { en: "💾 Save Video", ja: "💾 動画を保存" },
+    
+    // Error
+    time_err_export: { 
+        en: "Video export failed. Browser may not support WebM recording.", 
+        ja: "動画の書き出しに失敗しました。ブラウザがWebM録画に対応していない可能性があります。" 
+    }
 };
 
 export type Lang = 'en' | 'ja';

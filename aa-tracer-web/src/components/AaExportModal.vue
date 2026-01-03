@@ -1,6 +1,9 @@
 <script setup lang="ts">
 import { ref, onMounted, watch, computed, nextTick } from 'vue';
 import { useProjectSystem } from '../composables/useProjectSystem'; // ★追加: トースト通知用
+import { useI18n } from '../composables/useI18n'; // ★追加
+
+const { t } = useI18n(); // ★追加
 
 const props = defineProps<{
   isVisible: boolean;
@@ -152,8 +155,7 @@ const shareToX = async () => {
 <div class="modal-backdrop" v-if="isVisible" @click.self="$emit('close')">
     <div class="modal-window export-window">
         <div class="studio-header">
-            <h2>📤 Export Image</h2>
-            <button class="close-btn" @click="$emit('close')">✕</button>
+            <h2>{{ t('exp_title') }}</h2> <button class="close-btn" @click="$emit('close')">✕</button>
         </div>
         
         <div class="export-layout">
@@ -161,47 +163,36 @@ const shareToX = async () => {
                 <div class="canvas-container" ref="previewContainerRef" :class="{ transparent: bgColorMode === 'transparent' }">
                     <canvas ref="canvasRef" class="preview-canvas"></canvas>
                 </div>
-                <p class="preview-hint">Preview looks easier to read than actual output due to scaling.</p>
-            </div>
+                <p class="preview-hint">{{ t('exp_preview_hint') }}</p> </div>
             
             <div class="settings-pane">
                 <div class="config-section">
-                    <h3>Theme & Color</h3>
-                    <div class="toggle-group">
-                        <button :class="{ active: bgColorMode === 'white' }" @click="bgColorMode = 'white'; textColorOverride = defaultTextColor">⚪ White</button>
-                        <button :class="{ active: bgColorMode === 'dark' }" @click="bgColorMode = 'dark'">⚫ Dark</button>
-                        <button :class="{ active: bgColorMode === 'transparent' }" @click="bgColorMode = 'transparent'">▦ Trans</button>
-                    </div>
+                    <h3>{{ t('exp_theme_title') }}</h3> <div class="toggle-group">
+                        <button :class="{ active: bgColorMode === 'white' }" @click="bgColorMode = 'white'; textColorOverride = defaultTextColor">{{ t('exp_theme_white') }}</button> <button :class="{ active: bgColorMode === 'dark' }" @click="bgColorMode = 'dark'">{{ t('exp_theme_dark') }}</button> <button :class="{ active: bgColorMode === 'transparent' }" @click="bgColorMode = 'transparent'">{{ t('exp_theme_trans') }}</button> </div>
                     <div class="control-row" style="margin-top:15px;">
-                        <label>Text Color</label>
-                        <input type="color" v-model="textColorOverride" class="color-input">
+                        <label>{{ t('exp_text_override') }}</label> <input type="color" v-model="textColorOverride" class="color-input">
                     </div>
                 </div>
 
                 <div class="config-section">
-                    <h3>Layout & Quality</h3>
-                    <div class="control-group">
-                        <label>Padding: <b>{{ padding }}px</b></label>
-                        <input type="range" min="0" max="100" v-model.number="padding">
+                    <h3>{{ t('exp_layout_title') }}</h3> <div class="control-group">
+                        <label>{{ t('exp_padding') }}: <b>{{ padding }}px</b></label> <input type="range" min="0" max="100" v-model.number="padding">
                     </div>
                     <div class="control-group">
-                        <label>Scale: <b>{{ scale }}x</b></label>
-                         <div class="toggle-group small">
+                        <label>{{ t('exp_scale') }}: <b>{{ scale }}x</b></label> <div class="toggle-group small">
                             <button :class="{ active: scale === 1 }" @click="scale = 1">1x</button>
                             <button :class="{ active: scale === 2 }" @click="scale = 2">2x</button>
                             <button :class="{ active: scale === 3 }" @click="scale = 3">3x</button>
                         </div>
-                    </div>
+                        <p class="config-desc">{{ t('exp_scale_hint') }}</p> </div>
                 </div>
 
                 <div class="export-actions">
                     <button class="studio-btn w-100 x-share-btn" @click="shareToX">
-                        <span class="x-icon">𝕏</span> Share to X
-                    </button>
+                        <span class="x-icon">𝕏</span> {{ t('exp_share_x') }} </button>
                     
                     <button class="studio-btn primary large w-100" @click="downloadImage">
-                        ⬇️ Download PNG
-                    </button>
+                        {{ t('exp_download') }} </button>
                 </div>
             </div>
         </div>

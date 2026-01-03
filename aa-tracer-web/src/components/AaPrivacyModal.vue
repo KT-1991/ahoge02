@@ -1,24 +1,24 @@
 <script setup lang="ts">
+import { useI18n } from '../composables/useI18n'; // ★追加
+
 defineProps<{ isVisible: boolean }>();
 defineEmits<{ (e: 'close'): void }>();
+
+const { t } = useI18n(); // ★追加
 </script>
 
 <template>
   <div class="modal-backdrop" v-if="isVisible" @click.self="$emit('close')">
     <div class="modal-window privacy-window">
       <div class="studio-header">
-        <h2>🔒 Privacy Policy</h2>
-        <button class="close-btn" @click="$emit('close')">✕</button>
+        <h2>{{ t('priv_title') }}</h2> <button class="close-btn" @click="$emit('close')">✕</button>
       </div>
       <div class="content">
-        <h3>1. アクセス解析について</h3>
-        <p>当サイトでは、サービスの向上のために <b>Google Analytics</b> を使用しています。これらは匿名で収集され、個人を特定するものではありません。</p>
+        <h3>{{ t('priv_sec1_title') }}</h3> <p v-html="t('priv_sec1_desc')"></p>
         
-        <h3>2. データの保存について</h3>
-        <p>作成中のAAや設定データは、お使いのブラウザの <b>Local Storage</b> に保存されます。これらが外部のサーバーに送信されることはありません。</p>
+        <h3>{{ t('priv_sec2_title') }}</h3> <p v-html="t('priv_sec2_desc')"></p>
         
-        <h3>3. 画像処理について</h3>
-        <p>画像の読み込みやAIによる変換処理は、すべて <b>お客様のブラウザ内 (クライアントサイド)</b> で行われます。画像データが開発者のサーバー等にアップロードされることは一切ありませんので、安心してご利用ください。</p>
+        <h3>{{ t('priv_sec3_title') }}</h3> <p v-html="t('priv_sec3_desc')"></p>
       </div>
     </div>
   </div>

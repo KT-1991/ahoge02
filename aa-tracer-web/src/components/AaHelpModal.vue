@@ -1,45 +1,44 @@
 <script setup lang="ts">
+import { useI18n } from '../composables/useI18n'; // ★追加
+
 defineProps<{ isVisible: boolean }>();
 defineEmits<{ (e: 'close'): void }>();
+
+const { t } = useI18n(); // ★追加
 </script>
 
 <template>
   <div class="modal-backdrop" v-if="isVisible" @click.self="$emit('close')">
     <div class="modal-window help-window">
       <div class="studio-header">
-        <h2>📚 Help & Shortcuts</h2>
-        <button class="close-btn" @click="$emit('close')">✕</button>
+        <h2>{{ t('help_title') }}</h2> <button class="close-btn" @click="$emit('close')">✕</button>
       </div>
       <div class="help-content">
         
         <div class="help-section">
-          <h3>🖌️ Flow Brush (Image Tab)</h3>
-          <p>Draw lines on the canvas. When you release the mouse, AI converts your strokes into ASCII Art instantly.</p>
-          <div class="key-combo">
-            <span class="key">Drag</span> Draw Line
+          <h3>{{ t('help_flow_title') }}</h3> <p>{{ t('help_flow_desc') }}</p>     <div class="key-combo">
+            <span class="key">{{ t('help_action_drag') }}</span> {{ t('help_action_draw') }}
             <span class="sep">→</span>
-            <span class="key">Release</span> Generate AA
+            <span class="key">{{ t('help_action_release') }}</span> {{ t('help_action_gen') }}
           </div>
         </div>
 
         <div class="help-section">
-          <h3>⌨️ Keyboard Shortcuts</h3>
-          <div class="shortcut-list">
-            <div class="row"><span class="keys"><span class="k">Ctrl</span>+<span class="k">Z</span></span> <span class="desc">Undo</span></div>
-            <div class="row"><span class="keys"><span class="k">Ctrl</span>+<span class="k">Y</span></span> <span class="desc">Redo</span></div>
-            <div class="row"><span class="keys"><span class="k">Alt</span>+<span class="k">Drag</span></span> <span class="desc">Box Selection (Trace Editor)</span></div>
-            <div class="row"><span class="keys"><span class="k">Alt</span>+<span class="k">Arrow</span></span> <span class="desc">Nudge Cursor (微調整)</span></div>
-            <div class="row"><span class="keys"><span class="k">Tab</span></span> <span class="desc">Insert Zenkaku Space / Accept Ghost</span></div>
-            <div class="row"><span class="keys"><span class="k">Right Click</span></span> <span class="desc">Context Menu / AI Suggestion</span></div>
+          <h3>{{ t('help_kb_title') }}</h3> <div class="shortcut-list">
+            <div class="row"><span class="keys"><span class="k">Ctrl</span>+<span class="k">Z</span></span> <span class="desc">{{ t('edit_undo') }}</span></div>
+            <div class="row"><span class="keys"><span class="k">Ctrl</span>+<span class="k">Y</span></span> <span class="desc">{{ t('edit_redo') }}</span></div>
+            <div class="row"><span class="keys"><span class="k">Alt</span>+<span class="k">Drag</span></span> <span class="desc">{{ t('help_kb_box') }}</span></div>
+            <div class="row"><span class="keys"><span class="k">Alt</span>+<span class="k">Arrow</span></span> <span class="desc">{{ t('help_kb_nudge') }}</span></div>
+            <div class="row"><span class="keys"><span class="k">Tab</span></span> <span class="desc">{{ t('help_kb_tab') }}</span></div>
+            <div class="row"><span class="keys"><span class="k">Right Click</span></span> <span class="desc">{{ t('help_kb_ctx') }}</span></div>
           </div>
         </div>
 
         <div class="help-section">
-          <h3>✨ Tips</h3>
-          <ul>
-            <li><b>Safe Mode:</b> Use only standard characters visible on all devices.</li>
-            <li><b>Trace Opacity:</b> Lower opacity to see your AA clearly over the image.</li>
-            <li><b>Box Paste:</b> Use "Rect Paste" in Edit menu to paste AA blocks without breaking layout.</li>
+          <h3>{{ t('help_tips_title') }}</h3> <ul>
+            <li v-html="t('help_tips_safe')"></li>
+            <li v-html="t('help_tips_opacity')"></li>
+            <li v-html="t('help_tips_box')"></li>
           </ul>
         </div>
 

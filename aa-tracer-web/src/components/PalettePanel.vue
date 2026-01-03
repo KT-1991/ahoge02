@@ -10,6 +10,7 @@ const props = defineProps<{
   projectAAs: AaEntry[];
   currentAAIndex: number;
   categories: Category[];
+  fontStack: string; // ★追加: 文字幅計算のためにフォント情報を受け取る
 }>();
 
 const emit = defineEmits<{
@@ -18,7 +19,7 @@ const emit = defineEmits<{
   (e: 'delete-aa', idx: number): void;
   (e: 'add-new-aa'): void;
   (e: 'show-palette-editor'): void;
-  (e: 'import-palette', data: any[]): void; // ★追加
+  (e: 'import-palette', data: any[]): void;
 }>();
 
 const currentCategoryId = ref<string>('1');
@@ -48,7 +49,7 @@ const stopResizePalette = () => {
   window.removeEventListener('mouseup', stopResizePalette);
 };
 
-// ★追加: パレットのエクスポート
+// パレットのエクスポート
 const exportPalette = () => {
     const dataStr = JSON.stringify(props.categories, null, 2);
     const blob = new Blob([dataStr], { type: 'application/json' });
@@ -62,7 +63,7 @@ const exportPalette = () => {
     URL.revokeObjectURL(url);
 };
 
-// ★追加: パレットのインポート
+// パレットのインポート
 const importPalette = () => {
     const input = document.createElement('input');
     input.type = 'file';
@@ -75,15 +76,6 @@ const importPalette = () => {
             try {
                 const json = JSON.parse(ev.target?.result as string);
                 if (Array.isArray(json)) {
-                    // 親コンポーネント(App.vue)へ更新を通知する必要があるが、
-                    // PalettePanelは props.categories を直接いじれないため
-                    // ここでは emit('update:categories', json) をしたいところ。
-                    // しかし、現在の実装では categories は App.vue が持っていて
-                    // PalettePanel はそれを props で受け取っているだけなので、
-                    // App.vue 側で categories を更新するイベントを作るか、
-                    // ここで localStorage を書き換えてリロードを促すのが簡易的です。
-                    
-                    // 今回は App.vue と連携するため、emit を追加します
                     emit('import-palette', json);
                 } else {
                     alert('Invalid JSON format');
@@ -97,8 +89,23 @@ const importPalette = () => {
     input.click();
 };
 
-
 onUnmounted(() => stopResizePalette());
+
+// ★追加: 文字幅計算ロジック
+// 計測用の隠しCanvasを作成
+const measureCtx = document.createElement('canvas').getContext('2d')!;
+
+const getTooltip = (char: string): string => {
+    if (!props.fontStack) return char;
+
+    // AAエディタと同じフォント設定で計測
+    measureCtx.font = `16px ${props.fontStack}`;
+    const metrics = measureCtx.measureText(char);
+    // 幅を切り上げして整数で表示
+    const width = Math.ceil(metrics.width);
+    
+    return `${char} (${width}px)`;
+};
 </script>
 
 <template>
@@ -110,7 +117,7 @@ onUnmounted(() => stopResizePalette());
       </div>
       <div class="grid-scroll-area history-bg">
         <div class="char-grid-dense">
-          <button v-for="c in historyChars" :key="c" class="key-dense" @click="$emit('add-char', c)">{{ c }}</button>
+          <button v-for="c in historyChars" :key="c" class="key-dense" @click="$emit('add-char', c)" :title="getTooltip(c)">{{ c }}</button>
         </div>
       </div>
     </div>
@@ -132,7 +139,7 @@ onUnmounted(() => stopResizePalette());
       </div>
       <div class="grid-scroll-area">
         <div class="char-grid-dense">
-          <button v-for="c in (currentCategoryData?.chars || '').split('')" :key="c" class="key-dense" @click="$emit('add-char', c)">
+          <button v-for="c in (currentCategoryData?.chars || '').split('')" :key="c" class="key-dense" @click="$emit('add-char', c)" :title="getTooltip(c)">
             {{ c }}
           </button>
         </div>

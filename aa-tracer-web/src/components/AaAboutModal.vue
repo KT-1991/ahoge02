@@ -1,8 +1,12 @@
 <script setup lang="ts">
 
 
+import { useI18n } from '../composables/useI18n'; // ★追加
+
 defineProps<{ isVisible: boolean }>();
 defineEmits<{ (e: 'close'): void }>();
+
+const { t } = useI18n(); // ★追加
 
 const appVersion = "v1.0.0"; // 将来的にpackage.jsonから読むことも可能
 </script>
@@ -11,8 +15,7 @@ const appVersion = "v1.0.0"; // 将来的にpackage.jsonから読むことも可
   <div class="modal-backdrop" v-if="isVisible" @click.self="$emit('close')">
     <div class="modal-window about-window">
       <div class="studio-header">
-        <h2>ℹ️ About AAtelier</h2>
-        <button class="close-btn" @click="$emit('close')">✕</button>
+        <h2>{{ t('about_title') }}</h2> <button class="close-btn" @click="$emit('close')">✕</button>
       </div>
       
       <div class="about-content">
@@ -21,37 +24,28 @@ const appVersion = "v1.0.0"; // 将来的にpackage.jsonから読むことも可
                 <span class="icon-text">AA</span>
             </div>
             <h1 class="app-name">AAtelier</h1>
-            <p class="app-version">Version {{ appVersion }}</p>
-        </div>
+            <p class="app-version">{{ t('about_version') }} {{ appVersion }}</p> </div>
 
         <div class="desc-section">
-            <p>
-                AAtelier (アートリエ) は、AIを搭載した次世代のアスキーアートエディタです。<br>
-                画像をなぞるだけで、誰でも簡単に職人技のようなAAを作成できます。
-            </p>
+            <p v-html="t('about_desc')"></p>
         </div>
 
         <div class="links-section">
             <a href="https://github.com/あなたのID/リポジトリ名" target="_blank" class="link-card">
                 <span class="icon">📦</span>
                 <div class="link-info">
-                    <span class="link-title">GitHub Repository</span>
-                    <span class="link-desc">Source code & Issues</span>
-                </div>
+                    <span class="link-title">{{ t('about_gh_title') }}</span> <span class="link-desc">{{ t('about_gh_desc') }}</span> </div>
             </a>
             
             <a href="https://twitter.com/あなたのID" target="_blank" class="link-card">
                 <span class="icon">🐦</span>
                 <div class="link-info">
-                    <span class="link-title">Developer's X</span>
-                    <span class="link-desc">Follow for updates</span>
-                </div>
+                    <span class="link-title">{{ t('about_x_title') }}</span> <span class="link-desc">{{ t('about_x_desc') }}</span> </div>
             </a>
         </div>
 
         <div class="credits-section">
-            <h3>Powered by</h3>
-            <div class="tech-tags">
+            <h3>{{ t('about_powered') }}</h3> <div class="tech-tags">
                 <span class="tag">Vue 3</span>
                 <span class="tag">TypeScript</span>
                 <span class="tag">ONNX Runtime</span>
@@ -60,8 +54,7 @@ const appVersion = "v1.0.0"; // 将来的にpackage.jsonから読むことも可
         </div>
 
         <div class="footer-section">
-            &copy; 2026 AAtelier Project. All rights reserved.
-        </div>
+            &copy; 2026 {{ t('about_rights') }} </div>
       </div>
     </div>
   </div>

@@ -14,7 +14,7 @@ export function useLineArt() {
     
     // Settings
     const lineArtSettings = ref({
-        threshold: 128,
+        threshold: 200,
         thickness: 0,
         opacity: 100
     });
@@ -33,7 +33,7 @@ export function useLineArt() {
             rawLineArtCanvas.value = result;
             
             // 設定を初期値にリセットして適用
-            lineArtSettings.value = { threshold: 128, thickness: 0, opacity: 100 };
+            lineArtSettings.value = { threshold: 200, thickness: 0, opacity: 100 };
             applyLineArtSettings(sourceImage);
             
         } catch (e) {

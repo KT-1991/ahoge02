@@ -88,9 +88,48 @@ const refContent = ref({ title: '', content: '' });
 // Palette Data
 interface Category { id: string; name: string; chars: string; }
 const defaultCategories: Category[] = [
-    { id: '1', name: 'Basic', chars: "─│┌┐└┘├┤┬┴┼" },
-    { id: '2', name: 'Block', chars: "■□▀▄▌▐▖▗▘▙▚▛▜" },
-    { id: '3', name: 'Symbol', chars: "★☆○●◎◇◆" }
+{ id: '0', name: '直線', chars: "┌┬┐─├┼┤│└┴┘┏┳┓━┣╋┫┃┗┻┛┠╂┨┰┸┝┿┥┯┷＿__￣‐ｰー一―ｰ‐-=＝二ニﾆ≡三≠｛｝{}〔〕丨！!ｉijｌ|ll∥＼／/マﾏムﾑへヘﾍミﾐ彡丿ノﾉソｿ＜＞〈〉《》巛VＶ∨∧≧≦≪≫"},
+{ id: '1', name: '点', chars: "°′″＇＂冫〃丶ヽヾゝゞ´｀¨＾^`\"´`ﾟﾞ''，、､,."},
+{ id: '2', name: '曲線', chars: "丿ノﾉソｿ⌒（）()[]ハﾊイｲィｨリﾘソｿンﾝシｼナﾅ弋圦代介ｒrγ廴乂勹癶"},
+{ id: '3', name: '分岐線', chars: "∟Ｌ「」ＹYＴTｔtΥ癶λ￢￣⌒⊥丁匚冂厂√丿厶彡从斥斧爪笊气刈斗孑个介仆弋廴辷乂匕圦灯"},
+{ id: '4', name: 'まつ毛', chars: "ｨf弐ミｘxｒr示斗劣Y笊狄式弐仏圦沁宍糸心炉芹斥伐苳ｨfﾃ气ﾁ"},
+{ id: '5', name: '瞳上', chars: "うん儿か炒云笊芯符爻羔苳斧炙斥升劣升芍芥"},
+{ id: '6', name: '瞳下', chars: "し弋(ツしｿ乂少ｼ辷テ"},
+{ id: '7', name: '目・にっこり', chars: "ｘ=＝=ミ￢z抖斗弌彳芋"},
+{ id: '8', name: '眉', chars: "斗ｫｧﾄ七十"},
+{ id: '9', name: '罫線・斜め線', chars: "┌┬┐─├┼┤│└┴┘┏┳┓━┣╋┫┃┗┻┛┠╂┨┰┸┝┿┥┯┷＿￣∥「」=＝二≡三⊂⊃∪∩∈∋⊇⊆丶ヽヾゝゞ´｀＼¨ﾟﾞ巛＜《へヘﾍミﾐ／/丿ノﾉソｿ＞》〆⊿彡∠∟∨∧"},
+{ id: '10', name: '記号', chars: "□■◇◆△▲▽▼　○●☆★◎↑→←↓　＋－±×÷＝≠≡≒＜＞≦≧≪≫∞∽∝√∠⊥⌒∂∫∬∴∵∧∨￢⇒⇔∀∃♂♀∇＃＆＊＠§∮※〒〓◯♯♭♪†‡¶￥＄℃￠￡％Å‰°′″丨＇＂冫"},
+{ id: '11', name: '記号02', chars: "〃,_^`､l，‐'´》ｰ\"|Ｌ〈、厶｢エ气〉`"},
+{ id: '12', name: '記号・ｷﾞﾘｼｬ文字', chars: "イ彳匚亠斤廿个〒┴ΠΤ∞∽∝∩∪υιθσρδбъЦ庁丁了凵∂∟αβγδεζηθικλμνξοπρστυφχψωΑΒΓΔΕΖΗΘΙΚΛΜΝΞΟΠΡΣΤΥΦΧΨΩ"},
+{ id: '13', name: 'ﾃﾞﾌｫ漢字', chars: "一凹叶干久災咋昨皿三山士什十汁升小少上人心壬石川大只中丁刀凸乍二廿入八亡卜又毛夕了丶丿乂亅亠从仆儿兀冂冖冫几凵勹匕匚匸卅卞厂叮叭叨夂宀幵广廾弋彡彳鬥丨＇＂一凹叶干久災咋昨皿山士什十汁升小少上人心壬石川大只中丁刀凸乍二廿入八亡卜又毛夕了丿乂亅亠从仆儿兀冂冖冫几凵勹匕匚匸卅卞厂叮叭叨夂宀幵广廾弋彡彳鬥丨＇＂"},
+{ id: '14', name: 'ﾛｰﾏ数字/単位', chars: "ⅰⅱⅲⅳⅴⅵⅶⅷⅸⅹⅠⅡⅢⅣⅤⅥⅦⅧⅨⅩ㍉㌔㌢㍍㌘㌧㌃㌶㍑㍗㌍㌦㌣㌫㍊㌻㎜㎝㎞㎎㎏㏄㎡㍻〝〟№㏍℡"},
+{ id: '15', name: 'ユニ', chars: "&#9829;&#9832;&#9617;&#9618;&#9619;&#9760;&#9745;&#9829;"},
+{ id: '16', name: '瞳上', chars: "だ灯行衍仍了乞乍福勝檗繊茫忙佗它赱夾泛弐弍弌乏禾尓迩万亢兀亦不示宍卞抃圦圷下勿狄犾豺坏心雫以付刈刃竹仔拆斥汽气沁う爿"},
+{ id: '17', name: '瞳下', chars: "比之杙叱匕廴癶乂込辷弋炒少沙汐乃刈升刋歹"},
+{ id: '18', name: '目ﾊﾟｰﾂ', chars: "-━-赱符廿甘戊ﾇx竓芹ミx"},
+{ id: '19', name: '区切り線', chars: "━─_￣"},
+{ id: '20', name: '王・中・青・己', chars: "一二三十丁工土士壬ヱ干于千王圭至杢玉卦奎中串巨臣言亘車甲申由里画抂扛虹壮青靑音冒曽曹軍暈暉主当肖生缶曼肓膏冐胄胥背已己巳巴邑色曲皿血甚芭改祀々"},
+{ id: '21', name: '囗・日・口・亜', chars: "囗冂凵匚匸亡廿卩甘坩印夘犯口田畄曰日目旧月旦且冝但亶明奛炅朋崩萠宜苴宣宙叶叮吐叮叩叨叫呷咀品呂官営侶呈呆古吉杏台召谷亜亞襾唖堊巫亟並坐雨兩爾璽西酉酋丙面両鼎"},
+{ id: '22', name: '凵・匚・凸', chars: "凵凶幽函凾网囘冏内肉鬯可竒鬲匚区匡匣匪區匝匹匿匱嘔奩嫗嶇歐甌毆扈凸凹卍占貞歯鹵齒囓"},
+{ id: '23', name: '白・隹', chars: "白臼自百首月用角骨皂皇畠隹直甫甬耳県售瞿集唯寉焦甯匍真眞"},
+{ id: '24', name: '冊・典・丑', chars: "冊册弗刪柵嗣非韭菲韮扉斐暃典再苒冉而円母毋苺更五丑与互彑亙瓦立片爿牙淵壯奘弉"},
+{ id: '25', name: '廾・巾・川・人', chars: "廾升卅丗丱艸幵卉井丼并亦奔弄刊刑刔刺鼻尭巾市吊帛屯帝啻帚亭甼町奄尚岡罔高暠川州冫彳巛彡彦疹災莖徑頸人入从丿乂艾文又叉爻交殳攵乙乞叺呎臥"},
+{ id: '26', name: '斤・几・力', chars: "斤斥爪瓜斧呱狐抓弧派乍尓寸才欠作咋听吋芹笊几凡丹舟凱冗亢兌咒克九丸氿吭帆力刀刃勿匁匆刄刎彧昜笏切刧"},
+{ id: '27', name: '勹・弓・久', chars: "勹勺匀匀旬甸匂匀勾匈包弓弖弔弗弟第丐巧号咢夸弯弩穹弭弸拂佛沸久夂夊夕歹夛万方乃及吸冬麦舛宛梦灸多双"},
+{ id: '28', name: '八・儿・兄・只', chars: "八六穴介价界斉斎以似儿兀允元乢礼糺朮皃尢尤旡无就列別兄兇兒兜先充赤免兔只兵共呉宍黄寅其具真冥巽興貝負貢責貴賈頁"},
+{ id: '29', name: '史・大・哭', chars: "史吏哀衰喪套大犬太丈天夫夭失矢矣奚央夬欠支爽夾哭臭尖奧奐"},
+{ id: '30', name: '木・夲・手・乗', chars: "木本米禾釆忝未末千午牛辛半求平乎来宋杰夲卆呆早旱阜革巣単皐竍竏手耒拜豕豸彖豪毫毛羊美羔善奉奏秦拿掌庠乗乘剩示京亰東事争聿爭隶兼業畢身垂埀堯"},
+{ id: '31', name: '厂・广・尸・乕・布', chars: "厂屮仄灰厄圧厓厘辰晨声昃广庁庄庶卮危卷后巵巷尸戸尺尽尼局屆眉尻届屏屓屑乕尹伊笋夷為爲寿肅粛嘯庸蕭書晝墨布左右石名倉蒼存在宕岩缶"},
+{ id: '32', name: '子・女・心・匕・厶・民', chars: "子孑予矛斗仔孖孔孟季孚孕斈女奴妁妝妍委宴妥妾姜嫋心必恥忌志忍忽怱毖怎恚患悪惡匕七它虍它宅旨也世厶幺糸玄亥刻幻眩紊小少公分枩牟罕広宏禺丘氏民艮良衣虫云去会長套岳岻帋帶"},
+{ id: '33', name: '足・个', chars: "足疋定是气從之乏走赱鬼魂个仝命全舎僉盒傘翕禽會歛龠嶮崘崙曾甞"},
+{ id: '34', name: '廴・門・凩・癶', chars: "廴廻辷迅込辻近述迷爬処庭昶瓧咫旭毬剋尅門閂閃閊閘閏閨閭閒關鬥凩凧凪凬夙凰鼡癶癸発溌"},
+{ id: '35', name: '山・ｲ・囗・口', chars: "岦嵜崗崔嵐崖崑屶峇崗岑岺岌峠什仞仭仗付仍代行仁回囮圀圄叶叨叮吐吋呟呪咄喘"},
+{ id: '36', name: '弋・竹・彡・ｼ', chars: "弋戈弌弍弐式戒或戓戞戛曵戉戊戍戎戌成竺笄竿符笹杉衫彩髟形尨巡參寥廖勠汁汀江汗汪汕氿汽汎汚涯"},
+{ id: '37', name: '花・皿・罘', chars: "花芥苅茄芙芋華芍荀菊芒芦茵茴菌盂盈盖盃盆盟盥益益盒罘罟罪置"},
+{ id: '38', name: '卯・炎・棘・辨', chars: "卯卵卿不火水氷永丕丞兆北竹泉汞沓燕蒸承否呑多炎棗羹芻哥戔啖彁彊斷能毯爼疆皺赫棘孖弱羽羽兢喆林勞嚇菻蒜淋嵶彗晉普昆栞梺辨嬲嫐弼斑欒娚"},
+{ id: '39', name: '器・品・竜', chars: "器噐囂薑啜嵓嵒皃品晶劦刕淼森犇毳姦毳皛矗囁孱攝茘蕊蕋脇協巒巖竜亀竃黽龍壟鼠竄馬鳥魚翔翡跫壷壺壼薹蝨嘉壽"},
+{ id: '40', name: '豆・歪・加', chars: "豆豈豊壹畳疂歪奣尖劣岔岱加伽刈刋外叭叱仂化仆仏比舛功加劜礼扣"},
+{ id: '41', name: '花', chars: "艾"},
 ];
 const categories = ref<Category[]>(JSON.parse(JSON.stringify(defaultCategories)));
 const editingCatId = ref<string | null>(null);
@@ -169,7 +208,7 @@ const saveSession = () => {
         subTextColor: subTextColor.value,
         traceOpacity: traceOpacity.value,
         // ★追加: 言語設定
-        lang: currentLang.value
+        lang: currentLang.value,
     };
 
     try {
@@ -210,7 +249,7 @@ const loadSession = async () => {
 
         // ★追加: 言語設定の復元
         if (data.lang) currentLang.value = data.lang;
-        // 5. 画像復元 (非同期)
+        // 4. 画像復元 (非同期)
         if (data.imgDataUrl) {
             const img = new Image();
             img.src = data.imgDataUrl;
@@ -219,6 +258,16 @@ const loadSession = async () => {
                 paint.imageSize.value = { w: img.width, h: img.height };
                 paint.initPaintBuffer(img.width, img.height);
                 await paint.updateCanvasDimensions();
+                
+                // ★重要: 画像読み込みによるリセットを防ぐため、ここで再度変形を適用する
+                if (data.imgTransform) {
+                    paint.imgTransform.value = data.imgTransform;
+                    // 必要であれば updateImageTransformWrapper() などを呼ぶ
+                    if (typeof updateImageTransformWrapper === 'function') {
+                        updateImageTransformWrapper(); 
+                    }
+                }
+
                 await nextTick();
                 renderAllCanvases();
                 project.showToastMessage('Session Restored');
@@ -776,6 +825,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                 @add-char="addCharWrapper" @select-aa="idx => { currentAAIndex = idx; }" 
                 @delete-aa="deletePage" @add-new-aa="addNewPage" @show-palette-editor="showPaletteEditor=true"
                 @import-palette="handleImportPalette"
+                :font-stack="ai.customFontName.value"
             />
 
             <ImageControlPanel v-show="sidebarTab==='image'"

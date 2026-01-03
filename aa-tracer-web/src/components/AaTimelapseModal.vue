@@ -1,6 +1,8 @@
 <script setup lang="ts">
 import { ref, watch, onUnmounted, nextTick, computed } from 'vue';
 
+import { useI18n } from '../composables/useI18n'; // ★追加
+
 const props = defineProps<{
   isVisible: boolean;
   historyStack: string[];
@@ -10,6 +12,8 @@ const props = defineProps<{
 const emit = defineEmits<{
   (e: 'close'): void;
 }>();
+
+const { t } = useI18n(); // ★追加
 
 // --- Playback State ---
 const currentIndex = ref(0);
@@ -213,7 +217,7 @@ const downloadVideo = async () => {
 <div class="modal-backdrop" v-if="isVisible" @click.self="$emit('close')">
     <div class="modal-window timelapse-window">
         <div class="studio-header">
-            <h2>⏱️ Timelapse Replay ({{ currentIndex + 1 }} / {{ historyStack.length }})</h2>
+            <h2>{{ t('time_title') }} ({{ currentIndex + 1 }} / {{ historyStack.length }})</h2>
             <button class="close-btn" @click="$emit('close')">✕</button>
         </div>
         
@@ -222,9 +226,7 @@ const downloadVideo = async () => {
             
             <div v-if="isExporting" class="export-overlay">
                 <div class="spinner"></div>
-                <p>Rendering Video... {{ exportProgress }}%</p>
-                <p class="sub-text">Do not close window</p>
-            </div>
+                <p>{{ t('time_rendering') }} {{ exportProgress }}%</p> <p class="sub-text">{{ t('time_warn') }}</p>            </div>
         </div>
 
         <canvas ref="hiddenCanvasRef" style="display: none;"></canvas>
@@ -238,15 +240,13 @@ const downloadVideo = async () => {
             <div class="control-row">
                 <div class="left-controls">
                     <button class="control-btn" @click="togglePlay" :disabled="isExporting">
-                        {{ isPlaying ? '⏸ Pause' : '▶ Play' }}
+                        {{ isPlaying ? t('time_pause') : t('time_play') }}
                     </button>
-                    <button class="control-btn icon" @click="currentIndex = 0; stop()" title="Rewind" :disabled="isExporting">⏮</button>
-                </div>
+                    <button class="control-btn icon" @click="currentIndex = 0; stop()" :title="t('time_rewind')" :disabled="isExporting">⏮</button> </div>
 
                 <div class="right-controls">
                     <div class="speed-control">
-                        <span>Speed:</span>
-                        <select v-model.number="playbackSpeed" @change="isPlaying && play()" :disabled="isExporting">
+                        <span>{{ t('time_speed') }}</span> <select v-model.number="playbackSpeed" @change="isPlaying && play()" :disabled="isExporting">
                             <option :value="200">0.5x</option>
                             <option :value="100">1.0x</option>
                             <option :value="50">2.0x</option>
@@ -254,8 +254,7 @@ const downloadVideo = async () => {
                             <option :value="10">Max</option>
                         </select>
                     </div>
-                    <button class="control-btn primary" @click="downloadVideo" :disabled="isExporting" title="Save as .webm">
-                        💾 Save Video
+                    <button class="control-btn primary" @click="downloadVideo" :disabled="isExporting" :title="t('time_save')"> {{ t('time_save') }}
                     </button>
                 </div>
             </div>

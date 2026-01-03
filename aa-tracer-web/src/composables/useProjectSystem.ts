@@ -1,15 +1,12 @@
 import { ref, computed, nextTick, watch } from 'vue';
 import { AaFileManager, type AaEntry, type EncodingType } from '../utils/AaFileManager';
+import Encoding from 'encoding-japanese';
 
-
-// ★追加: 文字列のピクセル幅を計測するヘルパー関数
+// 文字列のピクセル幅を計測するヘルパー関数
 const measureWidth = (text: string, fontName: string): number => {
-    // ブラウザ環境でない場合は0を返すガード
     if (typeof document === 'undefined') return 0;
-    
     const canvas = document.createElement('canvas');
     const ctx = canvas.getContext('2d')!;
-    // フォントサイズはエディタに合わせて16pxとします
     ctx.font = `16px "${fontName}", "MS PGothic", sans-serif`;
     return ctx.measureText(text).width;
 };
@@ -47,7 +44,7 @@ export function useProjectSystem() {
         setTimeout(() => { showToast.value = false; }, 1500);
     };
 
-    // --- History Logic (変更なし) ---
+    // --- History Logic ---
     const _pushToStack = (text: string) => {
         if (historyIndex.value < historyStack.value.length - 1) {
             historyStack.value = historyStack.value.slice(0, historyIndex.value + 1);
@@ -65,124 +62,176 @@ export function useProjectSystem() {
     const redo = () => { if (historyIndex.value < historyStack.value.length - 1) { isHistoryNavigating.value = true; historyIndex.value++; aaOutput.value = historyStack.value[historyIndex.value]!; nextTick(() => { isHistoryNavigating.value = false; }); } else { showToastMessage('No Redo history'); } };
     const resetHistory = () => { historyStack.value = [aaOutput.value]; historyIndex.value = 0; };
 
-    // --- File Operations (変更なし) ---
+    // --- File Operations ---
     const addNewAA = () => { const num = projectAAs.value.length + 1; projectAAs.value.push({ title: `Untitled ${num}`, content: '' }); currentAAIndex.value = projectAAs.value.length - 1; resetHistory(); showToastMessage('New Page Added'); };
     const deleteAA = (idx: number) => { if (confirm('Are you sure?')) { if (projectAAs.value.length <= 1) { projectAAs.value[0] = { title: 'Untitled 1', content: '' }; currentAAIndex.value = 0; } else { projectAAs.value.splice(idx, 1); if (currentAAIndex.value >= projectAAs.value.length) { currentAAIndex.value = projectAAs.value.length - 1; } } resetHistory(); showToastMessage('Page Deleted'); } };
     const onLoadFile = async (file: File) => { if (!file) return; try { const entries = await AaFileManager.loadFile(file, loadEncoding.value); entries.forEach(e => projectAAs.value.push(e)); currentAAIndex.value = projectAAs.value.length - entries.length; resetHistory(); showToastMessage(`Loaded ${entries.length} AAs`); } catch (e) { console.error(e); showToastMessage('Load Failed'); } };
-    const onSaveFile = (format: 'AST'|'MLT', encoding: 'SJIS'|'UTF8') => { console.log(encoding); const content = format === 'MLT' ? projectAAs.value.map(a => `[AA][${a.title}]\n${a.content}\n`).join('') : aaOutput.value; const blob = new Blob([content], { type: 'text/plain;charset=utf-8' }); const url = URL.createObjectURL(blob); const a = document.createElement('a'); a.href = url; a.download = `aa_project.${format.toLowerCase()}`; a.click(); URL.revokeObjectURL(url); showToastMessage('File Saved'); };
-    const triggerCopy = async (mode: 'normal' | 'bbs') => { try { await navigator.clipboard.writeText(aaOutput.value); showToastMessage(mode === 'bbs' ? 'Copied for BBS!' : 'Copied!'); } catch (e) { showToastMessage('Copy Failed'); } };
-    const handlePaste = (e: ClipboardEvent, textarea: HTMLTextAreaElement) => { console.log(e.target); nextTick(() => commitHistory()); console.log(textarea.value) };
-    // ★修正: テキスト編集ロジック
-    const applyTextEdit = (type: string, fontName = 'Saitamaar') => {
-        // ★修正: 関数名を commitHistory に変更
-        // 変更を加える前に現状を保存します
-        if (typeof commitHistory === 'function') {
-            commitHistory();
+    
+    // ファイル保存ロジック (3形式 × 2エンコード)
+    const onSaveFile = (format: 'AST'|'MLT'|'TXT', encoding: 'SJIS'|'UTF8') => {
+        let content = '';
+        let ext = 'txt';
+
+        if (format === 'MLT') {
+            content = projectAAs.value.map(a => a.content).join('\n[SPLIT]\n');
+            ext = 'mlt';
+        } else if (format === 'AST') {
+            content = projectAAs.value.map(a => `[AA][${a.title}]\n${a.content}\n`).join('');
+            ext = 'ast';
         } else {
-            console.warn('commitHistory function not found');
+            content = aaOutput.value;
+            ext = 'txt';
         }
+        
+        let blobParts: BlobPart[];
+        let mimeType: string;
+
+        if (encoding === 'SJIS') {
+            const unicodeList = Encoding.stringToCode(content);
+            const sjisCodeList = Encoding.convert(unicodeList, {
+                to: 'SJIS',
+                from: 'UNICODE',
+                type: 'array'
+            });
+            const uint8Array = new Uint8Array(sjisCodeList);
+            blobParts = [uint8Array];
+            mimeType = 'text/plain;charset=shift_jis';
+        } else {
+            blobParts = [content];
+            mimeType = 'text/plain;charset=utf-8';
+        }
+
+        const blob = new Blob(blobParts, { type: mimeType });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        
+        const baseName = format === 'TXT' 
+            ? (projectAAs.value[currentAAIndex.value]?.title || 'aa')
+            : 'aa_project';
+            
+        a.download = `${baseName}.${ext}`;
+        a.click();
+        URL.revokeObjectURL(url);
+        showToastMessage(`File Saved (.${ext})`);
+    };
+
+    // ★修正: Shift-JIS変換時に実体参照を使うコピー処理
+    const triggerCopy = async (mode: 'normal' | 'bbs') => {
+        try {
+            let text = aaOutput.value;
+
+            if (mode === 'bbs') {
+                let safeText = '';
+                // 文字単位でループ (サロゲートペアも考慮して for-of を使用)
+                for (const char of text) {
+                    // 1. 文字コードを取得
+                    const unicodeList = Encoding.stringToCode(char);
+                    
+                    // 2. Shift-JISに変換してみる (配列で取得)
+                    const sjisList = Encoding.convert(unicodeList, {
+                        to: 'SJIS',
+                        from: 'UNICODE',
+                        type: 'array'
+                    });
+
+                    // 3. 判定: 元が'?'ではないのに、変換結果が'?'(63)になった場合は変換不能文字
+                    // encoding-japanese は変換できない文字を 63 (?) に置換します
+                    const isFallback = (sjisList.length === 1 && sjisList[0] === 63);
+                    
+                    if (isFallback && char !== '?') {
+                        // Shift-JISに存在しない文字 -> 数値実体参照に置換 (例: &#12345;)
+                        const codePoint = char.codePointAt(0);
+                        safeText += `&#${codePoint};`;
+                    } else {
+                        // 変換可能、または元々'?'だった場合 -> そのまま結合
+                        safeText += char;
+                    }
+                }
+                text = safeText;
+            }
+
+            await navigator.clipboard.writeText(text);
+            showToastMessage(mode === 'bbs' ? 'Copied for BBS (NCRs)!' : 'Copied!');
+        } catch (e) {
+            console.error(e);
+            showToastMessage('Copy Failed');
+        }
+    };
+
+    const handlePaste = (e: ClipboardEvent, textarea: HTMLTextAreaElement) => { console.log(e.target, textarea.value); nextTick(() => commitHistory()); };
+    
+    // テキスト編集ロジック (Align Right修正済み)
+    const applyTextEdit = (type: string, fontName = 'Saitamaar') => {
+        if (typeof commitHistory === 'function') commitHistory();
         
         const text = aaOutput.value;
         const lines = text.split('\n');
         let newLines: string[] = [];
 
         switch (type) {
-            case 'add-end-space':
-                newLines = lines.map(line => line + '　');
-                break;
-
-            case 'trim-end':
-                newLines = lines.map(line => line.replace(/[ 　]+$/, ''));
-                break;
-
-            case 'del-last-char':
-                newLines = lines.map(line => {
-                    const chars = Array.from(line);
-                    if (chars.length > 0) chars.pop();
-                    return chars.join('');
-                });
-                break;
-
-            case 'add-start-space': 
-                newLines = lines.map(line => '　' + line);
-                break;
-            
-            case 'trim-start':
-                newLines = lines.map(line => line.replace(/^[ 　]/, ''));
-                break;
-
-            case 'remove-empty':
-                newLines = lines.filter(line => line.trim().length > 0);
-                break;
-
+            case 'add-end-space': newLines = lines.map(line => line + '　'); break;
+            case 'trim-end': newLines = lines.map(line => line.replace(/[ 　]+$/, '')); break;
+            case 'del-last-char': newLines = lines.map(line => { const chars = Array.from(line); if (chars.length > 0) chars.pop(); return chars.join(''); }); break;
+            case 'add-start-space': newLines = lines.map(line => '　' + line); break;
+            case 'trim-start': newLines = lines.map(line => line.replace(/^[ 　]/, '')); break;
+            case 'remove-empty': newLines = lines.filter(line => line.trim().length > 0); break;
             case 'align-right': {
+                const wZen = measureWidth('　', fontName);
+                const wHan = measureWidth(' ', fontName);
+                const wThin = measureWidth('\u2009', fontName); 
+                const useThin = wThin > 0.1;
+
                 let maxW = 0;
-                // 各行の幅とテキストを保持
                 const lineData = lines.map(line => {
-                    const w = measureWidth(line, fontName);
+                    const cleanLine = line.replace(/[ 　\u2009\|]+$/, ''); 
+                    const w = measureWidth(cleanLine, fontName);
                     if (w > maxW) maxW = w;
-                    return { text: line, width: w };
+                    return { text: cleanLine, width: w };
                 });
 
-                const zenW = measureWidth('　', fontName);
-                const hanW = measureWidth(' ', fontName);
-                
-                // 誤差許容値
-                const EPSILON = 0.5;
+                maxW += wZen; // マージン
 
                 newLines = lineData.map(item => {
-                    let currentW = item.width;
+                    let remaining = maxW - item.width;
                     let spacer = '';
-                    // ターゲット幅との差分
-                    let remaining = maxW - currentW;
                     
-                    // まず全角で埋める
-                    while (remaining >= zenW - EPSILON) {
-                        spacer += '　';
-                        remaining -= zenW;
+                    if (wZen > 0) {
+                        const count = Math.floor(remaining / wZen);
+                        if (count > 0) { spacer += '　'.repeat(count); remaining -= count * wZen; }
                     }
-                    // 端数を半角で埋める
-                    while (remaining >= hanW - EPSILON) {
-                        spacer += ' ';
-                        remaining -= hanW;
+                    if (wHan > 0) {
+                        const count = Math.floor(remaining / wHan);
+                        if (count > 0) { spacer += ' '.repeat(count); remaining -= count * wHan; }
+                    }
+                    if (useThin) {
+                        const count = Math.round(remaining / wThin);
+                        if (count > 0) spacer += '\u2009'.repeat(count);
+                    } else {
+                        if (remaining > wHan * 0.5) spacer += ' ';
                     }
 
                     return item.text + spacer + '|';
                 });
                 break;
             }
-
-            default:
-                return; 
+            default: return; 
         }
-
         aaOutput.value = newLines.join('\n');
         showToastMessage('Text Edit Applied');
     };
 
-    // --- ★変更: Syntax Highlight Logic (BBS Mode) ---
+    // Syntax Highlight Logic (BBS Mode)
     const updateSyntaxHighlight = (bbsMode: boolean) => {
         if (!bbsMode) {
             highlightedHTML.value = '';
             return;
         }
-        
         let text = aaOutput.value;
-        // HTMLエスケープ (XSS対策)
         text = text.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-        // 1. 行頭の半角スペース (警告色)
-        // マルチラインモード(m)で、行頭(^)の半角スペース( +)を置換
         text = text.replace(/^( +)/gm, '<span class="warn-leading-space">$1</span>');
-
-        // 2. 連続する半角スペース (警告色)
-        // 2つ以上連続する場合
         text = text.replace(/( {2,})/g, '<span class="warn-consecutive-space">$1</span>');
-
-        // 3. アンカー (青色)
-        // >>数字 のパターン
         text = text.replace(/(&gt;&gt;\d+)/g, '<span class="bbs-anchor">$1</span>');
-
         highlightedHTML.value = text;
     };
 
@@ -190,9 +239,6 @@ export function useProjectSystem() {
     watch(currentAAIndex, () => { resetHistory(); });
     watch(aaOutput, (newVal) => {
         if (!isHistoryNavigating.value) _pushToStack(newVal);
-        // テキスト変更時にハイライト更新（設定状態はApp.vueから渡されるため、ここではリアクティブに反応できないが、
-        // 実際にはApp.vue側のwatchで制御するか、ここでstoreを持つ必要がある。
-        // 簡易的に、外部から updateSyntaxHighlight を呼ぶ設計にする。
     });
 
     return {

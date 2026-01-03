@@ -34,7 +34,6 @@ const emit = defineEmits<{
       <button class="icon-btn" @click="$emit('toggle-about')" title="About AAtelier">ℹ️</button>
       <button class="icon-btn" @click="$emit('toggle-help')" title="Help">❓</button>
       <button class="icon-btn" @click="$emit('toggle-config')" title="Configuration">⚙️</button>
-      <button class="icon-btn" @click="$emit('toggle-debug')" title="Debug Info">🐞</button>
     </div>
   </header>
 </template>
