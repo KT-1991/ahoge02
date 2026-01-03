@@ -542,6 +542,21 @@ onUnmounted(() => stopResizePane());
 .hint { color:#888; font-size:0.8rem; margin-right:10px; }
 .card-header { padding:8px 10px; background:#f9f9f9; border-bottom:1px solid #eee; display:flex; justify-content:space-between; align-items:center; flex: 0 0 32px; }
 .resize-handle { flex:0 0 8px; background:#f5f5f5; border:1px solid #ddd; display:flex; align-items:center; justify-content:center; cursor:row-resize; z-index:50; }
+/* 左右分割（縦棒）モードのときのスタイル上書き */
+.resize-handle.handle-v {
+  cursor: col-resize; /* カーソルを「左右矢印」に変更 */
+  border-top: none;   /* 上下の線は不要なので消す（お好みで） */
+  border-bottom: none;
+  border-left: 1px solid #ddd;  /* 左右に線をつける */
+  border-right: 1px solid #ddd;
+}
+
+/* 左右分割のときの「ハンドルバー（中央の棒）」を回転させる */
+.resize-handle.handle-v .handle-bar {
+  width: 3px;   /* 横幅を細く */
+  height: 30px; /* 縦幅を長く */
+}
+
 .handle-bar { width:30px; height:3px; background:#ccc; border-radius:2px; }
 .box-overlay-container { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:30; }
 .box-selection-line { position:absolute; background-color:rgba(0,100,255,0.2); border-left: 2px solid rgba(0,100,255,0.5); border-right: 2px solid rgba(0,100,255,0.5); }
