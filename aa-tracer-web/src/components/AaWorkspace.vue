@@ -2,6 +2,8 @@
 import { ref, onUnmounted, nextTick, computed, watch, onMounted } from 'vue';
 import { useI18n } from '../composables/useI18n'; // ★追加
 
+const LINE_HEIGHT = 18; // ★16から変更
+
 const { t } = useI18n(); // ★追加
 
 const props = defineProps<{
@@ -125,9 +127,9 @@ const updateSyncCaretAndInfo = (target: HTMLTextAreaElement) => {
     const style = window.getComputedStyle(target);
     const paddingLeft = parseFloat(style.paddingLeft) || 10;
     const paddingTop = parseFloat(style.paddingTop) || 10;
-    const top = (row * 16) + paddingTop;
+    const top = (row * LINE_HEIGHT) + paddingTop;
     const left = textWidth + paddingLeft;
-    syncCaretStyle.value = { top: `${top}px`, left: `${left}px`, height: '16px', display: 'block' };
+    syncCaretStyle.value = { top: `${top}px`, left: `${left}px`, height: `${LINE_HEIGHT}px`, display: 'block' };
     emit('cursor-info-update', { px: Math.round(textWidth) });
 };
 
@@ -289,7 +291,7 @@ const getPosInfoFromXY = (clientX: number, clientY: number) => {
     const style = window.getComputedStyle(textarea);
     const paddingLeft = parseFloat(style.paddingLeft) || 10;
     const paddingTop = parseFloat(style.paddingTop) || 10;
-    const lineHeight = 16; 
+    const lineHeight = LINE_HEIGHT; 
     const clickX = clientX - rect.left + textarea.scrollLeft;
     const clickY = clientY - rect.top + textarea.scrollTop;
     let row = Math.floor((clickY - paddingTop) / lineHeight);
@@ -336,7 +338,12 @@ const boxSelectionRects = computed(() => {
         const leftPx = ctx.measureText(subStrPre).width + paddingLeft;
         const selectedText = lineContent.substring(colStart, colEnd);
         const widthPx = ctx.measureText(selectedText).width || 5;
-        rects.push({ top: (r * 16 + paddingTop) + 'px', left: leftPx + 'px', width: widthPx + 'px', height: '16px' });
+        rects.push({ 
+            top: (r * LINE_HEIGHT + paddingTop) + 'px', 
+            left: leftPx + 'px', 
+            width: widthPx + 'px', 
+            height: `${LINE_HEIGHT}px` // ★高さも18px
+        });
     }
     return rects;
 });
@@ -633,7 +640,7 @@ onUnmounted(() => stopResizePane());
 
 <style scoped>
 /* (既存のStyleはそのまま維持してください。変更点はありません) */
-.aa-textarea, .aa-highlight-layer { font-family: var(--font-aa); font-size: 16px; line-height: 16px; letter-spacing: 0; padding: 10px; border: 1px solid transparent; box-sizing: border-box; width: 100%; min-height: 100%; white-space: pre; overflow: hidden; margin: 0; outline: none; resize: none; display: block; }
+.aa-textarea, .aa-highlight-layer { font-family: var(--font-aa); font-size: 16px; line-height: 18px; letter-spacing: 0; padding: 10px; border: 1px solid transparent; box-sizing: border-box; width: 100%; min-height: 100%; white-space: pre; overflow: hidden; margin: 0; outline: none; resize: none; display: block; }
 .aa-highlight-layer { position: absolute; top: 0; left: 0; color: transparent; pointer-events: none; z-index: 5; background: transparent; overflow: visible; }
 :deep(.warn-leading-space) { background-color: rgba(255, 0, 0, 0.2); }
 :deep(.warn-consecutive-space) { background-color: rgba(255, 165, 0, 0.3); }
@@ -646,7 +653,7 @@ onUnmounted(() => stopResizePane());
 .canvas-layers { position:absolute; top:0; left:0; pointer-events:none; }
 .layer-base, .layer-mask { position:absolute; top:0; left:0; }
 .ghost-layer { position: absolute; top: 0; left: 0; width: 100%; height: 100%; pointer-events: none; z-index: 25; }
-.ghost-text { position: absolute; font-family: var(--font-aa); font-size: 16px; line-height: 16px; color: rgba(255, 0, 0, 0.5); white-space: pre; background: rgba(255, 255, 0, 0.1); }
+.ghost-text { position: absolute; font-family: var(--font-aa); font-size: 16px; line-height: 18px; color: rgba(255, 0, 0, 0.5); white-space: pre; background: rgba(255, 255, 0, 0.1); }
 .context-menu { position: fixed; background: white; border: 1px solid #ccc; box-shadow: 0 4px 15px rgba(0,0,0,0.2); z-index: 10000; border-radius: 6px; overflow: hidden; min-width: 220px; animation: fadeIn 0.1s ease-out; }
 .menu-header { background: #f5f5f5; padding: 6px 10px; font-size: 0.75rem; font-weight: bold; color: #666; border-bottom: 1px solid #eee; display: flex; justify-content: space-between; align-items: center; }
 .menu-close-btn { font-size: 1rem; color: #999; cursor: pointer; border: none; background: transparent; }

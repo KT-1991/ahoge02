@@ -74,6 +74,7 @@ export const translations = {
     img_scale: { en: "Scale", ja: "拡大率" },
     img_rotation: { en: "Rotation", ja: "回転" },
     img_generate_btn: { en: "✨ Generate AA", ja: "✨ AA生成" },
+    img_stop_btn: {en: "STOP", ja: "中断"},
     
     // Config Modal
     cfg_title: { en: "⚙️ Configuration", ja: "⚙️ 設定" },

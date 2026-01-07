@@ -43,6 +43,7 @@ const emit = defineEmits<{
   (e: 'update:noise-gate', val: number): void;
   (e: 'update:generation-mode', val: string): void;
   (e: 'load-sample'): void; // ★追加
+  (e: 'cancel-generation'): void; // ★追加: 中断イベント
 }>();
 
 const onLoadFile = (e: Event) => {
@@ -139,6 +140,13 @@ const onLoadFile = (e: Event) => {
             <span v-if="isProcessing" class="spinner small"></span>
             <span>{{ t('img_generate_btn') }}</span>
           </button>
+          <button v-if="isProcessing" 
+                  class="studio-btn danger w-100"
+                  style="margin-top: 8px; display:flex; justify-content:center; align-items:center; gap:6px;"
+                  @click="$emit('cancel-generation')">
+            <span>⏹</span>
+            <span>{{ t('img_stop_btn') }}</span>
+          </button>
         </div>
     </div>
 
@@ -218,5 +226,16 @@ input[type="range"] { width: 100%; }
 .char-input {
     flex: 1; border: 1px solid #ddd; border-radius: 3px;
     padding: 2px 6px; font-family: monospace; font-size: 0.9rem;
+}
+/* ★追加: Danger Button Style */
+.studio-btn.danger {
+    background: transparent;
+    border-color: #ff9b9b;
+    color: #e06060;
+}
+.studio-btn.danger:hover {
+    background: #ff7b7b;
+    border-color: #ff7b7b;
+    color: white;
 }
 </style>

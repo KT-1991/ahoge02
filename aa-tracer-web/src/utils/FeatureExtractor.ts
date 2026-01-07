@@ -1,240 +1,556 @@
 declare const cv: any;
 
 export class FeatureExtractor {
-  static CROP_SIZE = 32;
-  static LINE_HEIGHT = 16;
+  // コードAに合わせて48pxに変更
+  static CROP_SIZE = 48;
+  // 行間を18pxに変更
+  static LINE_HEIGHT = 18; 
 
-  // === Classifier用 (提供されたコード準拠) ===
-  static generate9ChInput(
-    imgElement: HTMLImageElement | HTMLCanvasElement, 
-    lineThreshold: number = 0.4, // ここは提供コードでは lineWeight ではなく threshold になっていた点に注意
-    thinningIterations: number = 0,
-    maskElement: HTMLCanvasElement | null = null
-  ): Float32Array {
-    // 1. 画像読み込み
+  /**
+   * 画像全体から静的な特徴量（Skeleton, Density, Sin, Cos）を生成する
+   * ContextとCoordは推論時に動的に結合する
+   */
+  static generateBaseFeatures(imgElement: HTMLImageElement | HTMLCanvasElement): any {
     const src = cv.imread(imgElement);
     const gray = new cv.Mat();
-    cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-
-    // モルフォロジー変換による細線化処理
-    if (thinningIterations > 0) {
-      cv.threshold(gray, gray, 200, 255, cv.THRESH_BINARY);
-      const kernel = cv.getStructuringElement(cv.MORPH_CROSS, new cv.Size(3, 3));
-      cv.dilate(gray, gray, kernel, new cv.Point(-1, -1), thinningIterations);
-      kernel.delete();
+    
+    // グレースケール変換 (RGBA -> GRAY)
+    if (src.channels() === 4) {
+        cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+    } else {
+        src.copyTo(gray);
     }
 
-    const h = gray.rows;
-    const w = gray.cols;
+    // 1. 白黒反転 (黒背景、白インクにする)
+    const inv = new cv.Mat();
+    cv.bitwise_not(gray, inv);
 
-    // --- 前処理 ---
-    const blurred = new cv.Mat();
-    cv.GaussianBlur(gray, blurred, new cv.Size(3, 3), 0);
-
+  // --- ★ここから修正: Zhang-Suen Thinning Algorithm ---
+    // 2. Skeleton
+    // まず2値化 (0 or 255)
     const binary = new cv.Mat();
-    cv.adaptiveThreshold(blurred, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
+    cv.adaptiveThreshold(gray, binary, 255, cv.ADAPTIVE_THRESH_GAUSSIAN_C, cv.THRESH_BINARY_INV, 11, 2);
 
-    // --- Ch0: Skeleton ---
-    const dist = new cv.Mat();
-    cv.distanceTransform(binary, dist, cv.DIST_L2, 5);
-    cv.normalize(dist, dist, 0.0, 1.0, cv.NORM_MINMAX);
-    const skeleton = new cv.Mat();
-    cv.threshold(dist, skeleton, lineThreshold, 255, cv.THRESH_BINARY);
-    skeleton.convertTo(skeleton, cv.CV_8U);
+    // Zhang-Suen法の実装
+    // OpenCV.jsには組み込みのskeletonizeがないため、画素操作で実装します
+    const skeleton = binary.clone();
+    const rows = skeleton.rows;
+    const cols = skeleton.cols;
+    const data = skeleton.data; // Uint8Arrayへの参照
 
-    // --- Ch1, Ch2: Angle (Sin/Cos) ---
-    const gx = new cv.Mat();
-    const gy = new cv.Mat();
+    // ヘルパー: ピクセルインデックス取得
+    const getIdx = (r: number, c: number) => r * cols + c;
+
+    let isChanged = true;
+    
+    // 背景(黒)=0, 前景(白)=1 として扱うための正規化はせず、255/0のまま扱う
+    // 計算コスト削減のため、ループ内で分岐判定
+    
+    while (isChanged) {
+        isChanged = false;
+        const pixelsToRemove: number[] = [];
+
+        // Step 1 & Step 2 loop
+        for (let step = 0; step < 2; step++) {
+            pixelsToRemove.length = 0;
+
+            for (let r = 1; r < rows - 1; r++) {
+                for (let c = 1; c < cols - 1; c++) {
+                    const idx = getIdx(r, c);
+                    if (data[idx] === 0) continue; // 黒ならスキップ
+
+                    // 8近傍取得 (p2, p3, ..., p9)
+                    // p9 p2 p3
+                    // p8 p1 p4
+                    // p7 p6 p5
+                    const p2 = data[getIdx(r - 1, c)] > 0 ? 1 : 0;
+                    const p3 = data[getIdx(r - 1, c + 1)] > 0 ? 1 : 0;
+                    const p4 = data[getIdx(r, c + 1)] > 0 ? 1 : 0;
+                    const p5 = data[getIdx(r + 1, c + 1)] > 0 ? 1 : 0;
+                    const p6 = data[getIdx(r + 1, c)] > 0 ? 1 : 0;
+                    const p7 = data[getIdx(r + 1, c - 1)] > 0 ? 1 : 0;
+                    const p8 = data[getIdx(r, c - 1)] > 0 ? 1 : 0;
+                    const p9 = data[getIdx(r - 1, c - 1)] > 0 ? 1 : 0;
+
+                    const B = p2 + p3 + p4 + p5 + p6 + p7 + p8 + p9;
+                    if (B < 2 || B > 6) continue;
+
+                    let A = 0;
+                    if (p2 === 0 && p3 === 1) A++;
+                    if (p3 === 0 && p4 === 1) A++;
+                    if (p4 === 0 && p5 === 1) A++;
+                    if (p5 === 0 && p6 === 1) A++;
+                    if (p6 === 0 && p7 === 1) A++;
+                    if (p7 === 0 && p8 === 1) A++;
+                    if (p8 === 0 && p9 === 1) A++;
+                    if (p9 === 0 && p2 === 1) A++;
+
+                    if (A !== 1) continue;
+
+                    let m1, m2;
+                    if (step === 0) {
+                        m1 = p2 * p4 * p6;
+                        m2 = p4 * p6 * p8;
+                    } else {
+                        m1 = p2 * p4 * p8;
+                        m2 = p2 * p6 * p8;
+                    }
+
+                    if (m1 === 0 && m2 === 0) {
+                        pixelsToRemove.push(idx);
+                    }
+                }
+            }
+
+            if (pixelsToRemove.length > 0) {
+                isChanged = true;
+                for (let i = 0; i < pixelsToRemove.length; i++) {
+                    data[pixelsToRemove[i]!] = 0;
+                }
+            }
+        }
+    }
+    binary.delete(); // binaryはもう不要、skeletonに残っている
+    // --- ★修正ここまで ---
+
+    // 3. Density (Blur)
+    const density = new cv.Mat();
+    cv.GaussianBlur(inv, density, new cv.Size(3, 3), 0);
+    // Normalize 0-255
+    cv.normalize(density, density, 0, 255, cv.NORM_MINMAX);
+
+    // 4. Sin/Cos (Sobel -> CartToPolar)
+    const blurred = new cv.Mat();
+    cv.GaussianBlur(inv, blurred, new cv.Size(3, 3), 0);
     const blurredF32 = new cv.Mat();
     blurred.convertTo(blurredF32, cv.CV_32F);
-    
+
+    const gx = new cv.Mat();
+    const gy = new cv.Mat();
     cv.Sobel(blurredF32, gx, cv.CV_32F, 1, 0, 3);
     cv.Sobel(blurredF32, gy, cv.CV_32F, 0, 1, 3);
-    
+
     const mag = new cv.Mat();
     const angle = new cv.Mat();
     cv.cartToPolar(gx, gy, mag, angle, false); // radians
 
+    // マスク作成 (勾配が弱いところは0にする)
     const mask = new cv.Mat();
     cv.threshold(mag, mask, 30, 255, cv.THRESH_BINARY);
     mask.convertTo(mask, cv.CV_8U);
 
-    // --- Ch3: Density ---
-    const ch3 = new cv.Mat();
-    cv.GaussianBlur(binary, ch3, new cv.Size(15, 15), 0);
-
-    // --- 2. カラーマスク (Hatching) の処理 ---
-    const ch4 = new cv.Mat.zeros(h, w, cv.CV_8U); // Dot Body (Blue)
-    const ch5 = new cv.Mat.zeros(h, w, cv.CV_8U); // Line Body (Red)
-    const ch6 = new cv.Mat.zeros(h, w, cv.CV_8U); // Dot Border
-    const ch7 = new cv.Mat.zeros(h, w, cv.CV_8U); // Line Border
-
-    if (maskElement) {
-      const maskSrc = cv.imread(maskElement);
-      const rgbaPlanes = new cv.MatVector();
-      cv.split(maskSrc, rgbaPlanes);
-      
-      const rPlane = rgbaPlanes.get(0);
-      const bPlane = rgbaPlanes.get(2);
-
-      cv.threshold(rPlane, ch5, 100, 255, cv.THRESH_BINARY);
-      cv.threshold(bPlane, ch4, 100, 255, cv.THRESH_BINARY);
-
-      const kernel = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-      
-      const erodedDot = new cv.Mat();
-      cv.erode(ch4, erodedDot, kernel);
-      cv.subtract(ch4, erodedDot, ch6);
-      
-      const erodedLine = new cv.Mat();
-      cv.erode(ch5, erodedLine, kernel);
-      cv.subtract(ch5, erodedLine, ch7);
-
-      maskSrc.delete(); rgbaPlanes.delete(); rPlane.delete(); bPlane.delete();
-      kernel.delete(); erodedDot.delete(); erodedLine.delete();
-    }
-
-    // --- Output ---
-    const resultLen = h * w * 9;
-    const resultData = new Float32Array(resultLen);
-
-    const skeletonData = skeleton.data;
+    // Sin/Cos計算
+    // ((sin(a) + 1) / 2) * 255
+    // JSのMath.sin等は遅いので、ループで処理するか、cvの計算を使う
+    // ここでは簡便のためFloat32Arrayで計算してMatに戻す
+    const h = gray.rows;
+    const w = gray.cols;
+    const size = h * w;
     const angleData = angle.data32F;
     const maskData = mask.data;
-    const ch3Data = ch3.data;
-    const ch4Data = ch4.data; const ch5Data = ch5.data;
-    const ch6Data = ch6.data; const ch7Data = ch7.data;
+    
+    const sinData = new Uint8Array(size);
+    const cosData = new Uint8Array(size);
 
-    for (let y = 0; y < h; y++) {
-      for (let x = 0; x < w; x++) {
-        const idx = y * w + x;
-        const outIdx = idx * 9;
-
-        resultData[outIdx + 0] = skeletonData[idx];
-
-        if (maskData[idx] > 0) {
-           const a = angleData[idx];
-           resultData[outIdx + 1] = ((Math.sin(a) + 1.0) / 2.0) * 255;
-           resultData[outIdx + 2] = ((Math.cos(a) + 1.0) / 2.0) * 255;
+    for (let i = 0; i < size; i++) {
+        if (maskData[i] > 0) {
+            const a = angleData[i];
+            sinData[i] = ((Math.sin(a) + 1.0) / 2.0) * 255;
+            cosData[i] = ((Math.cos(a) + 1.0) / 2.0) * 255;
         } else {
-           resultData[outIdx + 1] = 0;
-           resultData[outIdx + 2] = 0;
+            sinData[i] = 0;
+            cosData[i] = 0;
         }
+    }
+    
+    // Clean up
+    src.delete(); gray.delete(); inv.delete(); blurred.delete(); blurredF32.delete();
+    gx.delete(); gy.delete(); mag.delete(); angle.delete(); mask.delete();
 
-        resultData[outIdx + 3] = ch3Data[idx];
-        resultData[outIdx + 4] = ch4Data[idx];
-        resultData[outIdx + 5] = ch5Data[idx];
-        resultData[outIdx + 6] = ch6Data[idx];
-        resultData[outIdx + 7] = ch7Data[idx];
-        resultData[outIdx + 8] = ((x + y) % 2) * 255;
+    // Matオブジェクトとして返す（後でcropするため）
+    // 注意: sinData/cosDataはJS ArrayなのでMatにする必要はないが、
+    // skeleton, densityはMatなので、全てTypedArrayまたはMatとして管理する方が良い。
+    // ここではメモリ管理を楽にするため、Float32Arrayの巨大なバッファにまとめて返す設計にする。
+    
+    // Output Format: [Skeleton, Density, Sin, Cos] (4 channels)
+    // Context, CoordX, CoordY は推論時に追加する
+    const baseFeatures = {
+        width: w,
+        height: h,
+        skeleton: skeleton.data, // Uint8Array
+        density: density.data,   // Uint8Array
+        sin: sinData,            // Uint8Array
+        cos: cosData             // Uint8Array
+    };
+
+    skeleton.delete(); density.delete();
+
+    return baseFeatures;
+  }
+
+  /**
+   * 指定位置のパッチを切り出し、7チャンネルの入力テンソルデータを生成する
+   * Code A: [Skel(0), Context(1), Dens(2), Sin(3), Cos(4), X(5), Y(6)]
+   */
+static extractPatch7Ch(
+      baseFeats: any, 
+      currentContextCanvas: HTMLCanvasElement,
+      centerX: number, 
+      centerY: number,
+      coords: Float32Array
+  ): Float32Array {
+      const C = this.CROP_SIZE; // 48
+      const half = C / 2;
+      const w = baseFeats.width;
+      const h = baseFeats.height;
+
+      const x1 = Math.floor(centerX - half);
+      const y1 = Math.floor(centerY - half);
+
+      // Contextの取得
+      // ★修正ポイント: コンテキスト用キャンバスは「現在の行(高さ48px)」だけを持っているので
+      // Y座標は y1（絶対座標）ではなく、0（ローカル座標の先頭）から読み取る必要があります。
+      const ctx = currentContextCanvas.getContext('2d', { willReadFrequently: true })!;
+      
+      // y=0 から C(48)px 分取得する
+      const ctxData = ctx.getImageData(x1, 0, C, C); 
+      
+      const result = new Float32Array(C * C * 7);
+
+      for (let py = 0; py < C; py++) {
+          for (let px = 0; px < C; px++) {
+              const globalX = x1 + px;
+              const globalY = y1 + py;
+              const dstIdx = (py * C + px) * 7;
+              
+              // 範囲外チェック
+              if (globalX < 0 || globalX >= w || globalY < 0 || globalY >= h) {
+                  // 範囲外処理
+                  result[dstIdx + 0] = 255; // Skel: Bg(255)
+                  result[dstIdx + 1] = 0;   // Ctx: Bg(0)
+                  result[dstIdx + 2] = 0;
+                  result[dstIdx + 3] = 0;
+                  result[dstIdx + 4] = 0;
+                  result[dstIdx + 5] = 0;
+                  result[dstIdx + 6] = 0;
+                  continue; 
+              }
+
+              const srcIdx = globalY * w + globalX;
+              
+              // 1. Skeleton (反転: 255-val)
+              result[dstIdx + 0] = 255 - baseFeats.skeleton[srcIdx];
+
+              // 2. Context
+              // ★修正ポイント: ctxDataは (0,0) 起点で取得したので、
+              // インデックス計算は (py * C + px) * 4 でOK。
+              // (以前はここがズレていた可能性があります)
+              const ctxPixelIdx = (py * C + px) * 4;
+              
+              // 範囲外(x方向のハミ出し)のケア
+              // getImageDataはキャンバス外を透明(0)で返すため、
+              // x1+px がキャンバス幅を超えている場合は透明になる。
+              // 期待値は「白(255)」なので、透明なら白扱いにして、そのあと反転する
+              
+              let r = 255; // デフォルト白(紙)
+              // ctxDataのバッファ範囲内かチェック
+              if (ctxPixelIdx < ctxData.data.length) {
+                  // アルファチャンネルを確認
+                  const a = ctxData.data[ctxPixelIdx + 3]!;
+                  if (a > 0) {
+                      // 色があるならそのR値
+                      r = ctxData.data[ctxPixelIdx]!;
+                  } else {
+                      // 透明なら白(紙)とみなす
+                      r = 255;
+                  }
+              }
+
+              let contextVal = 255 - r; // 黒(0) -> 255(Ink)
+
+              // 現在行より下(未来)は隠す
+              // LINE_HEIGHT(18)の半分(9)より下はマスク
+              if (py > half + (this.LINE_HEIGHT/2)) {
+                  contextVal = 0;
+              }
+              result[dstIdx + 1] = contextVal;
+
+              // 3. Density
+              result[dstIdx + 2] = baseFeats.density[srcIdx];
+
+              // 4. Sin
+              result[dstIdx + 3] = baseFeats.sin[srcIdx];
+
+              // 5. Cos
+              result[dstIdx + 4] = baseFeats.cos[srcIdx];
+
+              // 6. X-Coord
+              result[dstIdx + 5] = coords[(py * C + px) * 2 + 0]!;
+
+              // 7. Y-Coord
+              result[dstIdx + 6] = coords[(py * C + px) * 2 + 1]!;
+          }
       }
-    }
-
-    src.delete(); gray.delete(); blurred.delete(); binary.delete();
-    dist.delete(); skeleton.delete(); blurredF32.delete();
-    gx.delete(); gy.delete(); mag.delete(); angle.delete(); mask.delete(); ch3.delete();
-    ch4.delete(); ch5.delete(); ch6.delete(); ch7.delete();
-
-    return resultData;
+      return result;
   }
 
-  // === Vector用 (Code B準拠) ===
-  static skeletonize(src: any): any {
-    const gray = new cv.Mat();
-    if (src.channels() === 4) cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
-    else src.copyTo(gray);
-
-    const binary = new cv.Mat();
-    // 白背景(255) -> 黒背景(0)
-    cv.threshold(gray, binary, 0, 255, cv.THRESH_BINARY_INV + cv.THRESH_OTSU);
-
-    const skeleton = new cv.Mat.zeros(binary.rows, binary.cols, cv.CV_8U);
-    const temp = new cv.Mat();
-    const eroded = new cv.Mat();
-    const element = cv.getStructuringElement(cv.MORPH_CROSS, new cv.Size(3, 3));
-    
-    const img = binary.clone();
-    let done = false;
-    while (!done) {
-        cv.erode(img, eroded, element);
-        cv.dilate(eroded, temp, element);
-        cv.subtract(img, temp, temp);
-        cv.bitwise_or(skeleton, temp, skeleton);
-        eroded.copyTo(img);
-        if (cv.countNonZero(img) === 0) done = true;
-    }
-
-    // 白背景・黒文字に戻す (1px)
-    const result = new cv.Mat();
-    cv.bitwise_not(skeleton, result);
-
-    gray.delete(); binary.delete(); skeleton.delete();
-    temp.delete(); eroded.delete(); element.delete(); img.delete();
-    return result;
+  /**
+   * 48x48のCoordMapを生成する (0-255)
+   */
+  static createCoordMap(): Float32Array {
+      const C = this.CROP_SIZE;
+      const map = new Float32Array(C * C * 2);
+      for (let y = 0; y < C; y++) {
+          for (let x = 0; x < C; x++) {
+              const idx = (y * C + x) * 2;
+              // 0.0 - 1.0 -> 0 - 255
+              map[idx + 0] = (x / (C - 1)) * 255;
+              map[idx + 1] = (y / (C - 1)) * 255;
+          }
+      }
+      return map;
   }
 
-  static generate9ChInputFromSkeleton(skeletonSrc: any, maskElement: any = null): Float32Array {
-    console.log(maskElement);
-    const h = skeletonSrc.rows;
-    const w = skeletonSrc.cols;
+  static createCoordMapVector(): Float32Array {
+      const C = this.CROP_SIZE;
+      const map = new Float32Array(C * C * 2);
+      for (let y = 0; y < C; y++) {
+          for (let x = 0; x < C; x++) {
+              const idx = (y * C + x) * 2;
+              // 0..47 -> -1.0..1.0
+              // formula: (val / (size-1)) * 2 - 1
+              map[idx + 0] = (x / (C - 1)) * 2.0 - 1.0;
+              map[idx + 1] = (y / (C - 1)) * 2.0 - 1.0;
+          }
+      }
+      return map;
+  }
 
-    // 1pxスケルトン (黒背景)
-    const imgSkeletonInv = new cv.Mat();
-    cv.bitwise_not(skeletonSrc, imgSkeletonInv);
+  /**
+   * 画像(48x48)を受け取り、コードB用の6チャンネル入力を生成して返す
+   * Channels: [Src, Dist, Sin, Cos, X, Y]
+   * ※入力はすでに48x48にクロップされたCanvasまたはMatを想定
+   */
+  static generateVectorInput(
+      sourceCanvas: HTMLCanvasElement | any, // 48x48の文字画像
+      coordMap: Float32Array
+  ): Float32Array {
+      // ★追加: ガード処理
+      if (!coordMap) {
+          console.error("generateVectorInput: coordMap is missing!");
+          // 緊急回避用のダミーマップを作成
+          coordMap = this.createCoordMapVector();
+      }
+      const C = this.CROP_SIZE;
+      
+      // 1. 画像読み込み & 前処理
+      const src = cv.imread(sourceCanvas);
+      const gray = new cv.Mat();
+      if (src.channels() === 4) cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      else src.copyTo(gray);
+      
+      const inv = new cv.Mat();
+      cv.bitwise_not(gray, inv); // 0=Bg, 255=Ink
 
-    // 3px太らせ画像 (黒背景)
-    const kernelFat = cv.getStructuringElement(cv.MORPH_RECT, new cv.Size(3, 3));
-    const imgFatInv = new cv.Mat();
-    cv.dilate(imgSkeletonInv, imgFatInv, kernelFat, new cv.Point(-1, -1), 1);
-    
-    // Ch0: Skeleton (1px版)
-    const ch0 = imgSkeletonInv; 
+      // Ch0: Src (反転画像を 0.0-1.0 に正規化して使う)
+      // Ch1: Dist (距離変換)
+      const dist = new cv.Mat();
+      // cv.distanceTransform(src, dst, distanceType, maskSize)
+      cv.distanceTransform(inv, dist, cv.DIST_L2, 5);
+      cv.normalize(dist, dist, 0.0, 1.0, cv.NORM_MINMAX);
 
-    // Ch1, Ch2: Angle (3px版)
-    const imgFat = new cv.Mat();
-    cv.bitwise_not(imgFatInv, imgFat); // 白背景(3px)
-    const blurredFat = new cv.Mat();
-    cv.GaussianBlur(imgFat, blurredFat, new cv.Size(3, 3), 0);
-    const blurredFatF32 = new cv.Mat();
-    blurredFat.convertTo(blurredFatF32, cv.CV_32F);
-    
-    const gx = new cv.Mat(); const gy = new cv.Mat();
-    cv.Sobel(blurredFatF32, gx, cv.CV_32F, 1, 0, 3);
-    cv.Sobel(blurredFatF32, gy, cv.CV_32F, 0, 1, 3);
-    const mag = new cv.Mat(); const angle = new cv.Mat();
-    cv.cartToPolar(gx, gy, mag, angle, false);
-    const maskMat = new cv.Mat();
-    cv.threshold(mag, maskMat, 30, 255, cv.THRESH_BINARY);
-    maskMat.convertTo(maskMat, cv.CV_8U);
+      // Ch2,3: Sin, Cos
+      const blurred = new cv.Mat();
+      cv.GaussianBlur(inv, blurred, new cv.Size(3, 3), 0);
+      const blurredF32 = new cv.Mat();
+      blurred.convertTo(blurredF32, cv.CV_32F);
 
-    // Ch3: Density (3px版)
-    const ch3 = new cv.Mat();
-    cv.GaussianBlur(imgFatInv, ch3, new cv.Size(15, 15), 0);
+      const gx = new cv.Mat();
+      const gy = new cv.Mat();
+      cv.Sobel(blurredF32, gx, cv.CV_32F, 1, 0, 3);
+      cv.Sobel(blurredF32, gy, cv.CV_32F, 0, 1, 3);
 
-    const resultLen = h * w * 9;
-    const resultData = new Float32Array(resultLen);
-    const d0 = ch0.data; const dAng = angle.data32F; const dMask = maskMat.data; const d3 = ch3.data;
+      const mag = new cv.Mat();
+      const angle = new cv.Mat();
+      cv.cartToPolar(gx, gy, mag, angle, false); // radians
 
-    for (let y = 0; y < h; y++) {
-        for (let x = 0; x < w; x++) {
-            const idx = y * w + x;
-            const outIdx = idx * 9;
-            resultData[outIdx + 0] = d0[idx];
-            if (dMask[idx] > 0) {
-                const a = dAng[idx];
-                resultData[outIdx + 1] = ((Math.sin(a) + 1.0) / 2.0) * 255;
-                resultData[outIdx + 2] = ((Math.cos(a) + 1.0) / 2.0) * 255;
-            } else {
-                resultData[outIdx + 1] = 0; resultData[outIdx + 2] = 0;
-            }
-            resultData[outIdx + 3] = d3[idx];
-            resultData[outIdx + 8] = ((x + y) % 2) * 255;
-        }
-    }
+      const mask = new cv.Mat();
+      cv.threshold(mag, mask, 10, 255, cv.THRESH_BINARY); // Python版閾値: 10.0
+      mask.convertTo(mask, cv.CV_8U);
 
-    imgSkeletonInv.delete(); kernelFat.delete(); imgFatInv.delete(); imgFat.delete();
-    blurredFat.delete(); blurredFatF32.delete(); gx.delete(); gy.delete(); mag.delete();
-    angle.delete(); maskMat.delete(); ch3.delete();
-    return resultData;
+      // データ取り出し
+      const size = C * C;
+      const result = new Float32Array(size * 6);
+      
+      const invData = inv.data;
+      const distData = dist.data32F; // float
+      const angleData = angle.data32F;
+      const maskData = mask.data;
+
+      for (let i = 0; i < size; i++) {
+          const idx = i * 6;
+          
+          // Ch0: Src (0-255 -> 0.0-1.0)
+          result[idx + 0] = invData[i] / 255.0;
+
+          // Ch1: Dist (すでに0.0-1.0)
+          result[idx + 1] = distData[i];
+
+          // Ch2,3: Sin, Cos
+          if (maskData[i] > 0) {
+              const a = angleData[i];
+              // Python: (np.sin(angle) + 1.0) / 2.0
+              result[idx + 2] = (Math.sin(a) + 1.0) / 2.0;
+              result[idx + 3] = (Math.cos(a) + 1.0) / 2.0;
+          } else {
+              result[idx + 2] = 0;
+              result[idx + 3] = 0;
+          }
+
+          // Ch4,5: Coord (-1.0 ~ 1.0)
+          result[idx + 4] = coordMap[i * 2 + 0]!;
+          result[idx + 5] = coordMap[i * 2 + 1]!;
+      }
+
+      // Cleanup
+      src.delete(); gray.delete(); inv.delete(); dist.delete();
+      blurred.delete(); blurredF32.delete(); gx.delete(); gy.delete();
+      mag.delete(); angle.delete(); mask.delete();
+
+      return result;
+  }
+
+/**
+   * Code B推論用: 画像全体からベース特徴量(4ch)を生成
+   * [Src, Dist, Sin, Cos]
+   * ※ generateBaseFeatures (7ch用) と似ていますが、こちらはSkeletonを含まず、
+   * Src(反転画像)とDist(距離変換)を含みます。
+   */
+  static generateVectorBaseFeatures(imgElement: HTMLImageElement | HTMLCanvasElement): any {
+      const src = cv.imread(imgElement);
+      const gray = new cv.Mat();
+      if (src.channels() === 4) cv.cvtColor(src, gray, cv.COLOR_RGBA2GRAY);
+      else src.copyTo(gray);
+
+      const inv = new cv.Mat();
+      cv.bitwise_not(gray, inv); // 0=Bg, 255=Ink
+
+      const h = gray.rows;
+      const w = gray.cols;
+
+      // 1. Dist (Distance Transform)
+      const dist = new cv.Mat();
+      cv.distanceTransform(inv, dist, cv.DIST_L2, 5);
+      cv.normalize(dist, dist, 0.0, 1.0, cv.NORM_MINMAX);
+
+      // 2. Sin/Cos
+      const blurred = new cv.Mat();
+      cv.GaussianBlur(inv, blurred, new cv.Size(3, 3), 0);
+      const blurredF32 = new cv.Mat();
+      blurred.convertTo(blurredF32, cv.CV_32F);
+
+      const gx = new cv.Mat();
+      const gy = new cv.Mat();
+      cv.Sobel(blurredF32, gx, cv.CV_32F, 1, 0, 3);
+      cv.Sobel(blurredF32, gy, cv.CV_32F, 0, 1, 3);
+
+      const mag = new cv.Mat();
+      const angle = new cv.Mat();
+      cv.cartToPolar(gx, gy, mag, angle, false); 
+
+      const mask = new cv.Mat();
+      cv.threshold(mag, mask, 10, 255, cv.THRESH_BINARY);
+      mask.convertTo(mask, cv.CV_8U);
+
+      // Sin/Cosを計算してUint8に格納 (0-255)
+      const size = h * w;
+      const angleData = angle.data32F;
+      const maskData = mask.data;
+      const sinData = new Uint8Array(size);
+      const cosData = new Uint8Array(size);
+
+      for(let i=0; i<size; i++) {
+          if (maskData[i] > 0) {
+              const a = angleData[i];
+              sinData[i] = ((Math.sin(a) + 1.0) / 2.0) * 255;
+              cosData[i] = ((Math.cos(a) + 1.0) / 2.0) * 255;
+          } else {
+              sinData[i] = 0;
+              cosData[i] = 0;
+          }
+      }
+
+      // Cleanup
+      src.delete(); gray.delete(); blurred.delete(); blurredF32.delete();
+      gx.delete(); gy.delete(); mag.delete(); angle.delete(); mask.delete();
+      
+      const features = {
+          width: w,
+          height: h,
+          invData: inv.data,      // Uint8 (Src)
+          distData: dist.data32F, // Float32 (Dist)
+          sinData: sinData,       // Uint8
+          cosData: cosData        // Uint8
+      };
+      
+      inv.delete(); dist.delete();
+
+      return features;
+  }
+/**
+   * Code B推論用: 6チャンネルパッチ抽出
+   * [Src, Dist, Sin, Cos, X, Y]
+   */
+  static extractPatchVector(
+      baseFeats: any,
+      centerX: number,
+      centerY: number,
+      coordMap: Float32Array // -1.0 ~ 1.0
+  ): Float32Array {
+      const C = this.CROP_SIZE; // 48
+      const half = C / 2;
+      const w = baseFeats.width;
+      const h = baseFeats.height;
+
+      const x1 = Math.floor(centerX - half);
+      const y1 = Math.floor(centerY - half);
+
+      const result = new Float32Array(C * C * 6);
+
+      for (let py = 0; py < C; py++) {
+          for (let px = 0; px < C; px++) {
+              const globalX = x1 + px;
+              const globalY = y1 + py;
+              const dstIdx = (py * C + px) * 6;
+
+              // 範囲外は 0 (Padding)
+              if (globalX < 0 || globalX >= w || globalY < 0 || globalY >= h) {
+                  result[dstIdx + 0] = 0;
+                  result[dstIdx + 1] = 0;
+                  result[dstIdx + 2] = 0;
+                  result[dstIdx + 3] = 0;
+                  result[dstIdx + 4] = 0;
+                  result[dstIdx + 5] = 0;
+                  continue;
+              }
+
+              const srcIdx = globalY * w + globalX;
+
+              // Ch0: Src (0-255 -> 0.0-1.0)
+              result[dstIdx + 0] = baseFeats.invData[srcIdx] / 255.0;
+
+              // Ch1: Dist (すでにFloat 0.0-1.0)
+              result[dstIdx + 1] = baseFeats.distData[srcIdx];
+
+              // Ch2,3: Sin, Cos (0-255 -> 0.0-1.0)
+              result[dstIdx + 2] = baseFeats.sinData[srcIdx] / 255.0;
+              result[dstIdx + 3] = baseFeats.cosData[srcIdx] / 255.0;
+
+              // Ch4,5: Coord (-1.0 ~ 1.0)
+              result[dstIdx + 4] = coordMap[(py * C + px) * 2 + 0]!;
+              result[dstIdx + 5] = coordMap[(py * C + px) * 2 + 1]!;
+          }
+      }
+      return result;
   }
 }

@@ -22,6 +22,11 @@ import AaHelpModal from './components/AaHelpModal.vue'; // ★インポート
 import AaAboutModal from './components/AaAboutModal.vue'; // ★インポート
 import AaPrivacyModal from './components/AaPrivacyModal.vue'; // ★インポート
 
+const debugCanvas = ref<HTMLCanvasElement | null>(null);
+const LINE_HEIGHT = 18; // ★定数定義推奨
+// ★追加: Tab連打制御用のフラグ
+const isTabProcessing = ref(false);
+
 const showPrivacyModal = ref(false); // ★状態追加
 
 const showAboutModal = ref(false); // ★状態追加
@@ -84,6 +89,9 @@ const isBoxSelecting = ref(false);
 const showGrid = ref(false);
 const refWindowVisible = ref(false);
 const refContent = ref({ title: '', content: '' });
+
+// フローブラシ用: 変更が必要な行のインデックスを一時保存するセット
+const flowDirtyRows = new Set<number>();
 
 // Palette Data
 interface Category { id: string; name: string; chars: string; }
@@ -323,6 +331,7 @@ const moveCategory = (idx: number, dir: number) => {
 
 // --- ★修正: アプリ起動時の初期化 ---
 onMounted(async () => {
+    ai.debugCanvasRef.value = debugCanvas.value;
     project.resetHistory();
     loadPaletteFromStorage();
     window.addEventListener('mouseup', onGlobalMouseUp);
@@ -503,6 +512,12 @@ const onMouseDownCanvas = (e: MouseEvent) => {
         if (!isEraser) {
             if (paint.paintMode.value as any === 'flow') {
                 ctx.strokeStyle = '#000000'; 
+                // クリックした瞬間の行を登録
+                const PADDING_TOP = 10;
+                const rowIndex = Math.floor((imgPos.y - PADDING_TOP) / LINE_HEIGHT);
+                if (rowIndex >= 0) {
+                    flowDirtyRows.add(rowIndex);
+                }
             } else {
                 ctx.strokeStyle = paint.paintColor.value === 'blue' ? '#0000FF' : '#FF0000';
             }
@@ -595,34 +610,46 @@ const getCaretPixelPos = (textarea: HTMLTextAreaElement, text: string, caretIdx:
     const paddingTop = parseFloat(style.paddingTop) || 10;
     const borderLeft = parseFloat(style.borderLeftWidth) || 0;
     const borderTop = parseFloat(style.borderTopWidth) || 0;
-    const y = (row * 16) + paddingTop + borderTop - textarea.scrollTop;
+    const y = (row * LINE_HEIGHT) + paddingTop + borderTop - textarea.scrollTop;
     const x = textWidth + paddingLeft + borderLeft - textarea.scrollLeft;
     return { x, y, row, col: currentLineText.length };
 };
 
-const updateGhostSuggestion = debounce(async (textarea: HTMLTextAreaElement) => {
+// ★変更: updateGhostSuggestion の中身を切り出して、即時実行できる関数を作る
+const performSuggestion = async (textarea: HTMLTextAreaElement) => {
     if (!paint.sourceImage.value || !ai.isReady.value) return;
-    if (textarea.selectionStart !== textarea.selectionEnd) { isGhostVisible.value = false; return; }
+    
+    // キャレット位置取得
+    // カーソル位置が変わっている可能性があるので、現在のselectionStartを使う
     const pos = getCaretPixelPos(textarea, project.aaOutput.value, textarea.selectionStart);
+    
     if (!pos) return;
     if (pos.y < 0 || pos.y > paint.canvasDims.value.height || pos.x < 0 || pos.x > paint.canvasDims.value.width) {
         isGhostVisible.value = false; return; 
     }
+
+    // 推論実行
     const suggestion = await ai.getSuggestion(
         workspaceRef.value!.canvasRef!, 
         paint.paintBuffer.value, 
         paint.imgTransform.value, 
         pos.x, 
-        pos.y + 8 
+        pos.y// 座標微調整 (Y_OFFSET込みのAI側座標系に合わせるならここで調整)
     );
+
     if (suggestion && suggestion.trim().length > 0) {
         ghostText.value = suggestion;
         ghostPos.value = { x: pos.x, y: pos.y };
         isGhostVisible.value = true;
     } else {
         isGhostVisible.value = false;
+        ghostText.value = ''; // 念のためクリア
     }
-}, 100);
+};
+
+// 通常の入力時用（デバウンスあり）
+const updateGhostSuggestion = debounce((t: HTMLTextAreaElement) => performSuggestion(t), 100);
+
 
 const onTextCursorMove = (e: Event) => {
     contextMenuVisible.value = false;
@@ -667,17 +694,46 @@ const onTextKeyDown = async (e: KeyboardEvent) => {
     }
     if (e.key === 'Tab') {
         e.preventDefault();
-        if (workspaceRef.value) {
-            if (isGhostVisible.value) {
-                const char = ghostText.value;
-                workspaceRef.value.insertAtCursor(char, activeEditor.value || 'trace');
-                isGhostVisible.value = false;
-                await nextTick();
-                const ta = (activeEditor.value === 'text' ? (workspaceRef.value as any).textTextareaRef : (workspaceRef.value as any).traceTextareaRef) as HTMLTextAreaElement;
-                if (ta) updateGhostSuggestion(ta);
-            } else {
-                workspaceRef.value.insertAtCursor('　', activeEditor.value || 'trace');
+        // ★ロックチェック: 前回の推論・挿入が終わっていなければ無視する
+        if (isTabProcessing.value) return;
+        isTabProcessing.value = true;
+
+        try {
+            if (workspaceRef.value) {
+                const target = e.target as HTMLTextAreaElement;
+
+                // 1. 挿入する文字を決定
+                // ゴーストが出ていればそれを、出ていなければ(連打中など)推論を試みる
+                let charToInsert = isGhostVisible.value ? ghostText.value : null;
+
+                if (!charToInsert) {
+                    // ゴーストがない場合、即時推論して取得を試みる
+                    // (ここでの wait が重要)
+                    await performSuggestion(target);
+                    if (isGhostVisible.value) {
+                        charToInsert = ghostText.value;
+                    }
+                }
+
+                // 2. 文字挿入 (なければ全角スペース)
+                const text = charToInsert || '　';
+                workspaceRef.value.insertAtCursor(text, activeEditor.value || 'trace');
+                
+                // 3. 次の推論の準備
+                isGhostVisible.value = false; // 一旦消す
+                ghostText.value = '';
+
+                // ★重要: DOM更新とキャレット移動を待つ
+                await nextTick(); 
+
+                // 4. 次のサジェストを即時実行 (待機)
+                // これが終わるまで isTabProcessing は true のままなので、
+                // キーリピートが速すぎても次の Tab は無視される
+                await performSuggestion(target);
             }
+        } finally {
+            // ロック解除
+            isTabProcessing.value = false;
         }
         return;
     }
@@ -692,7 +748,7 @@ const onRequestContextMenu = async (e: MouseEvent, target: HTMLTextAreaElement) 
     if (ai.isReady.value && paint.sourceImage.value) {
         const pos = getCaretPixelPos(target, project.aaOutput.value, target.selectionStart);
         if (pos && workspaceRef.value?.canvasRef) {
-            const candidates = await ai.getCandidates(workspaceRef.value.canvasRef, paint.paintBuffer.value, paint.imgTransform.value, pos.x, pos.y + 8);
+            const candidates = await ai.getCandidates(workspaceRef.value.canvasRef, paint.paintBuffer.value, paint.imgTransform.value, pos.x, pos.y);
             contextCandidates.value = candidates;
         } else { contextCandidates.value = []; }
     } else { contextCandidates.value = []; }
@@ -735,6 +791,7 @@ const presetColors = ['#222222', '#000000', '#444444', '#666666', '#888888', '#a
 
 // ★ Flow Paint終了時の処理 (ガード処理と合成処理)
 const onFlowPaintEnd = async (rect: { minY: number, maxY: number }) => {
+    console.log(rect.maxY);
     // 準備ができていない、または描画バッファがない場合は何もしない
     if (!ai.isReady.value || !paint.paintBuffer.value) return;
     console.log("test1")
@@ -748,16 +805,20 @@ const onFlowPaintEnd = async (rect: { minY: number, maxY: number }) => {
     // AI推論を実行
     // CanvasRef(画面表示)ではなく、SourceImage(元データ) と PaintBuffer(手書き) を合成して推論する
     const currentText = project.aaOutput.value;
+    const rowsToUpdate = Array.from(flowDirtyRows).sort((a, b) => a - b);
+    flowDirtyRows.clear(); // セットはクリアして次の蓄積に備える
     const newText = await ai.generateRows(
         paint.sourceImage.value as any, // 元画像 (白紙orロードした画像)
         paint.paintBuffer.value, // 手書き線
         paint.imgTransform.value,
-        currentText,
-        rect.minY,
-        rect.maxY
+        rowsToUpdate,
+        currentText
     );
-    
-    project.aaOutput.value = newText;
+    console.log(rowsToUpdate, newText);
+    // 4. 結果を反映
+    if (newText) {
+        project.aaOutput.value = newText;
+    }
     project.commitHistory();
     
     // ★重要: 描画した線を消さずに残す
@@ -840,6 +901,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                 @reset-lineart="() => { lineArt.rawLineArtCanvas.value=null; renderAllCanvases(); }"
                 @process-image="processImageWrapper"
                 @update:img-transform="val => { paint.imgTransform.value = val; updateImageTransformWrapper(); }"
+                @cancel-generation="ai.cancelGeneration"
                 @update:paint-mode="val => paint.paintMode.value = val as any"
                 @update:paint-color="val => paint.paintColor.value = val as any"
                 @update:brush-size="val => paint.brushSize.value = val"

@@ -171,7 +171,7 @@ export function useProjectSystem() {
 
         switch (type) {
             case 'add-end-space': newLines = lines.map(line => line + '　'); break;
-            case 'trim-end': newLines = lines.map(line => line.replace(/[ 　]+$/, '')); break;
+            case 'trim-end': newLines = lines.map(line => line.replace(/[ 　\u2009]+$/, '')); break;
             case 'del-last-char': newLines = lines.map(line => { const chars = Array.from(line); if (chars.length > 0) chars.pop(); return chars.join(''); }); break;
             case 'add-start-space': newLines = lines.map(line => '　' + line); break;
             case 'trim-start': newLines = lines.map(line => line.replace(/^[ 　]/, '')); break;
