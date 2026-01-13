@@ -12,9 +12,9 @@ export default defineConfig(({ command }) => {
       registerType: 'autoUpdate',
       includeAssets: ['favicon.ico', 'apple-touch-icon.png', 'masked-icon.svg'],
       manifest: {
-        name: 'AAtelier',
-        short_name: 'AAtelier',
-        description: 'AI-Powered ASCII Art Editor',
+        name: 'AHoge Editor ML',
+        short_name: 'AHoge Editor ML',
+        description: 'AI-Powered ASCII Art Editor アスキーアート編集・生成アプリ',
         theme_color: '#Fdfbf7', // アプリの背景色に合わせる
         background_color: '#Fdfbf7',
         display: 'standalone', // アプリのように表示
