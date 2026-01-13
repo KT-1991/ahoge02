@@ -843,7 +843,9 @@ const onFlowPaintEnd = async (rect: { minY: number, maxY: number }) => {
 // ★追加: サンプル画像を読み込む関数
 const loadSampleImage = async () => {
     try {
-        const response = await fetch('/sample.png');
+        const BASE_URL = import.meta.env.BASE_URL;
+        const fixedUrl = BASE_URL === '/' ? `/sample.png` : `${BASE_URL}sample.png`;
+        const response = await fetch(fixedUrl);
         if (!response.ok) throw new Error('Sample image not found');
         const blob = await response.blob();
         const file = new File([blob], "sample.png", { type: "image/png" });
