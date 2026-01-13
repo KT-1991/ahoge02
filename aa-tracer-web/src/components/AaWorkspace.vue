@@ -414,10 +414,8 @@ const onMouseDownCanvasLocal = (e: MouseEvent) => {
 
 const onMouseUpTextarea = () => { 
     // ★ Flow Brush終了
-    console.log("test1-1", (window as any).isFlowPainting)
     if ((window as any).isFlowPainting) {
         (window as any).isFlowPainting = false;
-        console.log("test1-2")
         if (dirtyRect.value) {
             emit('flow-paint-end', { minY: dirtyRect.value.minY, maxY: dirtyRect.value.maxY });
             dirtyRect.value = null;

@@ -1,6 +1,7 @@
 import { ref, computed, nextTick, watch } from 'vue';
 import { AaFileManager, type AaEntry, type EncodingType } from '../utils/AaFileManager';
 import Encoding from 'encoding-japanese';
+import { _unused } from '../utils/common';
 
 // 文字列のピクセル幅を計測するヘルパー関数
 const measureWidth = (text: string, fontName: string): number => {
@@ -159,7 +160,7 @@ export function useProjectSystem() {
         }
     };
 
-    const handlePaste = (e: ClipboardEvent, textarea: HTMLTextAreaElement) => { console.log(e.target, textarea.value); nextTick(() => commitHistory()); };
+    const handlePaste = (e: ClipboardEvent, textarea: HTMLTextAreaElement) => { _unused(e.target, textarea.value); nextTick(() => commitHistory()); };
     
     // テキスト編集ロジック (Align Right修正済み)
     const applyTextEdit = (type: string, fontName = 'Saitamaar') => {

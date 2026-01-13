@@ -1,5 +1,6 @@
 import { ref } from 'vue';
 import { LineArtProcessor } from '../utils/LineArtProcessor';
+import { _unused } from '../utils/common';
 
 declare const cv: any;
 
@@ -46,7 +47,7 @@ export function useLineArt() {
 
     // 2. パラメータ調整 (OpenCV)
     const applyLineArtSettings = (sourceImage: HTMLImageElement) => {
-        console.log(sourceImage);
+        _unused(sourceImage);
         if (!rawLineArtCanvas.value) {
             processedSource.value = null;
             return;

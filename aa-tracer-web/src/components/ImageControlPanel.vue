@@ -1,21 +1,18 @@
 <script setup lang="ts">
+import { useI18n } from '../composables/useI18n';
 
-import { useI18n } from '../composables/useI18n'; // ★追加
-
-const { t } = useI18n(); // ★使用開始
+const { t } = useI18n();
 
 const props = defineProps<{
   sourceImage: HTMLImageElement | null;
   isProcessing: boolean;
   isExtracting: boolean; 
   rawLineArtCanvas: HTMLCanvasElement | null;
-  // LineArtSettingsはApp.vueと合わせるため、汎用的に定義しておきます
   lineArtSettings: { threshold: number, thickness?: number, blur?: number, denoise?: number };
   traceOpacity: number;
   imgTransform: { scale: number, rotation: number, x: number, y: number };
   paintMode: string;
   paintColor: string;
-  // ★追加: ハッチング文字
   targetCharBlue: string;
   targetCharRed: string;
   brushSize: number;
@@ -24,7 +21,6 @@ const props = defineProps<{
   generationMode: string;
 }>();
 
-// Vueのイベント規約(kebab-case)に合わせて定義します
 const emit = defineEmits<{
   (e: 'load-image', file: File): void;
   (e: 'extract-lineart'): void;
@@ -35,15 +31,14 @@ const emit = defineEmits<{
   (e: 'update:img-transform', val: any): void;
   (e: 'update:paint-mode', val: string): void;
   (e: 'update:paint-color', val: string): void;
-  // ★追加: 文字更新
   (e: 'update:target-char-blue', val: string): void;
   (e: 'update:target-char-red', val: string): void;
   (e: 'update:brush-size', val: number): void;
   (e: 'update:thinning-level', val: number): void;
   (e: 'update:noise-gate', val: number): void;
   (e: 'update:generation-mode', val: string): void;
-  (e: 'load-sample'): void; // ★追加
-  (e: 'cancel-generation'): void; // ★追加: 中断イベント
+  (e: 'load-sample'): void;
+  (e: 'cancel-generation'): void;
 }>();
 
 const onLoadFile = (e: Event) => {
@@ -65,7 +60,7 @@ const onLoadFile = (e: Event) => {
       </div>
       <div class="control-row">
          <button class="studio-btn outline w-100" @click="$emit('load-sample')" :disabled="isProcessing">
-            🖼️ Try Sample Image
+           🖼️ Try Sample Image
          </button>
       </div>
       <div class="control-row" v-if="sourceImage">
@@ -91,29 +86,36 @@ const onLoadFile = (e: Event) => {
     <div class="panel-section">
         <h3>{{ t('img_paint_transform') }}</h3>
         <div class="paint-tools">
-            <button :class="{ active: paintMode === 'move' }" @click="$emit('update:paint-mode', 'move')" title="Move/Scale Image">✋</button>
+            <button :class="{ active: paintMode === 'move' }" @click="$emit('update:paint-mode', 'move')" title="Move/Scale">✋</button>
             <button :class="{ active: paintMode === 'brush' }" @click="$emit('update:paint-mode', 'brush')" title="Brush">🖊</button>
             <button :class="{ active: paintMode === 'eraser' }" @click="$emit('update:paint-mode', 'eraser')" title="Eraser">消</button>
-            <button :class="{ active: paintMode === 'bucket' }" @click="$emit('update:paint-mode', 'bucket')" title="Fill">🪣</button>
-            <button :class="{ active: paintMode === 'flow' }" @click="$emit('update:paint-mode', 'flow')" title="Flow Brush (Direct AA)">✒️</button>
+            <button :class="{ active: paintMode === 'bucket' }" @click="$emit('update:paint-mode', 'bucket')" title="Bucket">🪣</button>
+            <button :class="{ active: paintMode === 'flow' }" @click="$emit('update:paint-mode', 'flow')" title="Flow Brush">✒️</button>
         </div>
         
-        <div class="paint-colors" v-if="paintMode !== 'move'">
-            <button class="color-btn blue" :class="{ active: paintColor === 'blue' }" @click="$emit('update:paint-color', 'blue')"></button>
-            <button class="color-btn red" :class="{ active: paintColor === 'red' }" @click="$emit('update:paint-color', 'red')"></button>
+        <div v-if="paintMode !== 'move'" class="paint-config-area">
             
-            <input type="range" min="1" max="50" :value="brushSize" class="brush-size-slider" @input="$emit('update:brush-size', +($event.target as HTMLInputElement).value)">
-        </div>
+            <div class="brush-size-row">
+                <span style="font-size:0.8rem; color:#666;">Size: {{ brushSize }}px</span>
+                <input type="range" min="1" max="50" :value="brushSize" class="brush-size-slider" @input="$emit('update:brush-size', +($event.target as HTMLInputElement).value)">
+            </div>
 
-        <div class="hatch-settings" v-if="paintMode !== 'move' && paintMode !== 'eraser' && paintMode !== 'flow'">
-             <div class="hatch-row">
-                 <span class="dot blue"></span>
-                 <input type="text" :value="targetCharBlue" @input="$emit('update:target-char-blue', ($event.target as HTMLInputElement).value)" class="char-input" placeholder=":">
-             </div>
-             <div class="hatch-row">
-                 <span class="dot red"></span>
-                 <input type="text" :value="targetCharRed" @input="$emit('update:target-char-red', ($event.target as HTMLInputElement).value)" class="char-input" placeholder="/">
-             </div>
+            <div class="color-palette">
+                <div class="color-item">
+                    <button class="color-btn black" :class="{ active: paintColor === 'black' }" @click="$emit('update:paint-color', 'black')" title="Ink (Line)"></button>
+                    <span class="color-label">Ink</span>
+                </div>
+
+                <div class="color-item">
+                    <button class="color-btn blue" :class="{ active: paintColor === 'blue' }" @click="$emit('update:paint-color', 'blue')" title="Hatching 1"></button>
+                    <input type="text" :value="targetCharBlue" @input="$emit('update:target-char-blue', ($event.target as HTMLInputElement).value)" class="mini-input" placeholder=":">
+                </div>
+
+                <div class="color-item">
+                    <button class="color-btn red" :class="{ active: paintColor === 'red' }" @click="$emit('update:paint-color', 'red')" title="Hatching 2"></button>
+                    <input type="text" :value="targetCharRed" @input="$emit('update:target-char-red', ($event.target as HTMLInputElement).value)" class="mini-input" placeholder="/">
+                </div>
+            </div>
         </div>
 
         <div v-if="paintMode === 'flow'" style="margin: 10px 0; font-size: 0.8rem; color: #666; background: #f9f9f9; padding: 8px; border-radius: 4px;">
@@ -204,30 +206,34 @@ input[type="range"] { width: 100%; }
 .paint-tools { display: flex; gap: 5px; margin-bottom: 8px; }
 .paint-tools button { flex: 1; padding: 6px; background: #f5f5f5; border: 1px solid #ddd; border-radius: 4px; cursor: pointer; }
 .paint-tools button.active { background: #e6b086; color: white; border-color: #e6b086; }
-.paint-colors { display: flex; gap: 8px; align-items: center; margin-bottom: 10px; }
-.color-btn { width: 24px; height: 24px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #ccc; cursor: pointer; }
+
+/* ペイント設定エリア */
+.paint-config-area {
+    background: #fcfcfc; border: 1px solid #eee;
+    padding: 10px; border-radius: 6px;
+    display: flex; flex-direction: column; gap: 10px;
+}
+.brush-size-row { display: flex; align-items: center; gap: 8px; }
+.brush-size-slider { flex: 1; }
+
+.color-palette { display: flex; flex-direction: column; gap: 8px; }
+.color-item { display: flex; align-items: center; gap: 8px; }
+.color-label { font-size: 0.8rem; color: #555; font-weight: bold; }
+
+.color-btn { width: 28px; height: 28px; border-radius: 50%; border: 2px solid #fff; box-shadow: 0 0 0 1px #ccc; cursor: pointer; flex-shrink: 0; }
+.color-btn.black { background: #000; }
 .color-btn.blue { background: blue; }
 .color-btn.red { background: red; }
-.color-btn.active { box-shadow: 0 0 0 2px #e6b086; transform: scale(1.1); }
-.brush-size-slider { flex: 1; }
+.color-btn.active { box-shadow: 0 0 0 2px #e6b086, 0 0 4px rgba(0,0,0,0.2); transform: scale(1.1); z-index: 1; }
+
+.mini-input {
+    flex: 1; border: 1px solid #ddd; border-radius: 3px;
+    padding: 4px 6px; font-family: monospace; font-size: 0.9rem;
+}
+
 .sep { border: 0; border-top: 1px dashed #eee; margin: 10px 0; }
 .check-row { display: flex; align-items: center; gap: 6px; cursor: pointer; }
 
-/* ★追加: ハッチング文字設定用のスタイル */
-.hatch-settings {
-    background: #fdfdfd; border: 1px solid #eee;
-    padding: 8px; border-radius: 4px;
-    display: flex; flex-direction: column; gap: 5px;
-}
-.hatch-row { display: flex; align-items: center; gap: 8px; }
-.dot { width: 8px; height: 8px; border-radius: 50%; }
-.dot.blue { background: blue; }
-.dot.red { background: red; }
-.char-input {
-    flex: 1; border: 1px solid #ddd; border-radius: 3px;
-    padding: 2px 6px; font-family: monospace; font-size: 0.9rem;
-}
-/* ★追加: Danger Button Style */
 .studio-btn.danger {
     background: transparent;
     border-color: #ff9b9b;

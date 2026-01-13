@@ -4,8 +4,8 @@ declare const cv: any;
 export function useCanvasPaint() {
     // --- State ---
     const paintBuffer = ref<HTMLCanvasElement | null>(null);
-    const paintMode = ref<'brush' | 'bucket' | 'eraser' | 'move'>('move'); 
-    const paintColor = ref<'blue' | 'red'>('blue');
+    const paintMode = ref<'brush' | 'bucket' | 'eraser' | 'move' | 'flow'>('move'); 
+    const paintColor = ref<'blue' | 'red' | 'black'>('blue');
     const brushSize = ref(10);
     
     // Image State
@@ -75,7 +75,7 @@ export function useCanvasPaint() {
         
         let color = [0, 0, 0, 0];
         if (!isEraser) {
-            color = paintColor.value === 'blue' ? [0, 0, 255, 150] : [255, 0, 0, 150];
+            color = paintColor.value === 'blue' ? [0, 0, 255, 255] : [255, 0, 0, 255];
         }
 
         const maskPtr = fillMask.data;

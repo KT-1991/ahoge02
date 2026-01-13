@@ -11,3 +11,7 @@ export function debounce<T extends (...args: any[]) => any>(fn: T, delay: number
     }, delay);
   };
 }
+
+export function _unused(..._args: unknown[]): void {
+  // 何もしない
+}

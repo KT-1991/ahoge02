@@ -4,7 +4,7 @@ import { useProjectSystem } from './composables/useProjectSystem';
 import { useCanvasPaint } from './composables/useCanvasPaint';
 import { useLineArt } from './composables/useLineArt';
 import { useAiGeneration } from './composables/useAiGeneration';
-import { debounce } from './utils/common';
+import { _unused, debounce } from './utils/common';
 
 // Components
 import AppHeader from './components/AppHeader.vue';
@@ -510,16 +510,16 @@ const onMouseDownCanvas = (e: MouseEvent) => {
         
         // ★修正: Flowモードなら黒 (#000000)
         if (!isEraser) {
-            if (paint.paintMode.value as any === 'flow') {
+            if (paint.paintMode.value === 'flow') {
                 ctx.strokeStyle = '#000000'; 
-                // クリックした瞬間の行を登録
-                const PADDING_TOP = 10;
-                const rowIndex = Math.floor((imgPos.y - PADDING_TOP) / LINE_HEIGHT);
-                if (rowIndex >= 0) {
-                    flowDirtyRows.add(rowIndex);
-                }
             } else {
-                ctx.strokeStyle = paint.paintColor.value === 'blue' ? '#0000FF' : '#FF0000';
+                // paintColor に応じて色を変える
+                switch(paint.paintColor.value) {
+                    case 'blue': ctx.strokeStyle = 'blue'; break; // 純粋な青 (B>128)
+                    case 'red':  ctx.strokeStyle = 'red';  break; // 純粋な赤 (R>128)
+                    case 'black': 
+                    default:     ctx.strokeStyle = '#000000'; break; // 黒 (R,G,B < 128)
+                }
             }
         }
         
@@ -628,13 +628,19 @@ const performSuggestion = async (textarea: HTMLTextAreaElement) => {
         isGhostVisible.value = false; return; 
     }
 
+    // ★追加: 直前の文字を取得
+    const caretIdx = textarea.selectionStart;
+    // 0文字目なら空文字、それ以外なら1つ前の文字を取得
+    const prevChar = caretIdx > 0 ? project.aaOutput.value[caretIdx - 1] : '';
+
     // 推論実行
     const suggestion = await ai.getSuggestion(
         workspaceRef.value!.canvasRef!, 
         paint.paintBuffer.value, 
         paint.imgTransform.value, 
         pos.x, 
-        pos.y// 座標微調整 (Y_OFFSET込みのAI側座標系に合わせるならここで調整)
+        pos.y,
+        prevChar // ★追加: エンジンに渡す
     );
 
     if (suggestion && suggestion.trim().length > 0) {
@@ -791,17 +797,14 @@ const presetColors = ['#222222', '#000000', '#444444', '#666666', '#888888', '#a
 
 // ★ Flow Paint終了時の処理 (ガード処理と合成処理)
 const onFlowPaintEnd = async (rect: { minY: number, maxY: number }) => {
-    console.log(rect.maxY);
+    _unused(rect)
     // 準備ができていない、または描画バッファがない場合は何もしない
     if (!ai.isReady.value || !paint.paintBuffer.value) return;
-    console.log("test1")
     // ガード: バッファサイズが0ならエラーになるのでリターン
     if (paint.paintBuffer.value.width === 0 || paint.paintBuffer.value.height === 0) return;
-    console.log("test2")
     // paint.sourceImage (元画像) がない場合でも、onMountedで初期化されているはずだが
     // 万が一のガード
     if (!paint.sourceImage.value) return;
-    console.log("test3")
     // AI推論を実行
     // CanvasRef(画面表示)ではなく、SourceImage(元データ) と PaintBuffer(手書き) を合成して推論する
     const currentText = project.aaOutput.value;
@@ -814,7 +817,7 @@ const onFlowPaintEnd = async (rect: { minY: number, maxY: number }) => {
         rowsToUpdate,
         currentText
     );
-    console.log(rowsToUpdate, newText);
+    _unused(rowsToUpdate, newText);
     // 4. 結果を反映
     if (newText) {
         project.aaOutput.value = newText;
@@ -873,7 +876,7 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
     />
 
     <div class="workspace">
-      <AaWorkspace ref="workspaceRef" v-model:aa-output="aaOutput" v-model:current-aa-title="projectAAs[currentAAIndex]!.title" :font-stack="fontStack" :is-painting-active="sidebarTab === 'image'" @click-text="onTextCursorMove" @keyup-text="onTextCursorMove" @keydown-text="onTextKeyDown" @cursor-info-update="onCursorInfoUpdate" @flow-paint-end="onFlowPaintEnd" :context-menu-visible="contextMenuVisible" :context-menu-pos="contextMenuPos" :context-candidates="contextCandidates" @request-context-menu="onRequestContextMenu" @select-candidate="onSelectCandidate" @close-context-menu="contextMenuVisible = false" v-model:trace-pane-ratio="tracePaneRatio" :view-mode="viewMode" :split-direction="splitDirection" :is-layout-swapped="isLayoutSwapped" :source-image="paint.sourceImage.value" :canvas-dims="paint.canvasDims.value" :trace-opacity="traceOpacity" :show-background-image="showBackgroundImage" :show-grid-overlay="false" :paint-mode="paint.paintMode.value" :caret-sync-pos="caretSyncPos" :is-box-selecting="isBoxSelecting" :box-selection-rects="boxSelectionRects" :is-ghost-visible="isGhostVisible" :ghost-pos="ghostPos" :ghost-text="ghostText" :aa-text-color="aaTextColor" :highlighted-h-t-m-l="project.highlightedHTML.value" @active-editor="val => activeEditor = val" @mousedown-canvas="onMouseDownCanvas" @input-text="e => {console.log(e.target)}" @paste-text="e => project.handlePaste(e, e.target as HTMLTextAreaElement)" />
+      <AaWorkspace ref="workspaceRef" v-model:aa-output="aaOutput" v-model:current-aa-title="projectAAs[currentAAIndex]!.title" :font-stack="fontStack" :is-painting-active="sidebarTab === 'image'" @click-text="onTextCursorMove" @keyup-text="onTextCursorMove" @keydown-text="onTextKeyDown" @cursor-info-update="onCursorInfoUpdate" @flow-paint-end="onFlowPaintEnd" :context-menu-visible="contextMenuVisible" :context-menu-pos="contextMenuPos" :context-candidates="contextCandidates" @request-context-menu="onRequestContextMenu" @select-candidate="onSelectCandidate" @close-context-menu="contextMenuVisible = false" v-model:trace-pane-ratio="tracePaneRatio" :view-mode="viewMode" :split-direction="splitDirection" :is-layout-swapped="isLayoutSwapped" :source-image="paint.sourceImage.value" :canvas-dims="paint.canvasDims.value" :trace-opacity="traceOpacity" :show-background-image="showBackgroundImage" :show-grid-overlay="false" :paint-mode="paint.paintMode.value" :caret-sync-pos="caretSyncPos" :is-box-selecting="isBoxSelecting" :box-selection-rects="boxSelectionRects" :is-ghost-visible="isGhostVisible" :ghost-pos="ghostPos" :ghost-text="ghostText" :aa-text-color="aaTextColor" :highlighted-h-t-m-l="project.highlightedHTML.value" @active-editor="val => activeEditor = val" @mousedown-canvas="onMouseDownCanvas" @input-text="e => {_unused(e.target)}" @paste-text="e => project.handlePaste(e, e.target as HTMLTextAreaElement)" />
         <aside class="sidebar">
         <div class="sidebar-tabs">
             <button :class="{ active: sidebarTab==='palette' }" @click="sidebarTab='palette'">📝 Palette</button>
@@ -1377,6 +1380,35 @@ textarea.aa-textarea.box-mode-active::selection { background-color: transparent 
 .drop-icon { font-size: 4rem; margin-bottom: 10px; }
 .drop-message h2 { margin: 0; font-size: 2rem; }
 .drop-message p { margin: 10px 0 0; font-size: 1.2rem; opacity: 0.9; }
+
+.debug-monitor {
+  position: fixed;
+  bottom: 10px;
+  right: 10px;
+  background: rgba(0, 0, 0, 0.8);
+  padding: 5px;
+  border: 1px solid #444;
+  border-radius: 4px;
+  z-index: 100000; /* 最前面 */
+  box-shadow: 0 0 10px rgba(0,0,0,0.5);
+  pointer-events: none; /* 操作を邪魔しないように */
+}
+
+.debug-label {
+  color: #fff;
+  font-size: 10px;
+  margin-bottom: 2px;
+  font-family: monospace;
+  text-align: center;
+}
+
+.debug-canvas-el {
+  background: #000; /* 透明部分が黒く見えるように */
+  border: 1px solid #666;
+  width: 320px; /* 画面上では少し大きく表示 (2倍) */
+  height: 80px; 
+  image-rendering: pixelated; /* ドットをくっきり表示 */
+}
 
 @keyframes pulse {
     0% { transform: scale(1); }
