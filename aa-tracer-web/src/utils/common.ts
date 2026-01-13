@@ -15,3 +15,10 @@ export function debounce<T extends (...args: any[]) => any>(fn: T, delay: number
 export function _unused(..._args: unknown[]): void {
   // 何もしない.
 }
+
+const BASE_URL = import.meta.env.BASE_URL;
+export function fixPath (path: string): string {
+            if (path.startsWith('http')) return path;
+            const cleanPath = path.startsWith('/') ? path.slice(1) : path;
+            return BASE_URL === '/' ? `/${cleanPath}` : `${BASE_URL}${cleanPath}`;
+};

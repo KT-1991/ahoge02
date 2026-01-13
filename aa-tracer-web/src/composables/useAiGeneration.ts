@@ -1,7 +1,7 @@
 import { ref, type Ref } from 'vue';
 import { InferenceEngine, DEFAULT_CHARS } from '../utils/InferenceEngine';
 import { FeatureExtractor } from '../utils/FeatureExtractor';
-import { _unused } from '../utils/common';
+import { _unused, fixPath } from '../utils/common';
 
 export function useAiGeneration() {
     const engine = new InferenceEngine();
@@ -80,7 +80,7 @@ export function useAiGeneration() {
             // デフォルト文字リストの復元
             let defaultChars = DEFAULT_CHARS;
             try {
-                const res = await fetch('/aa_chars.json');
+                const res = await fetch(fixPath('/aa_chars.json'));
                 if (res.ok) {
                     const data = await res.json();
                     defaultChars = data.map((c: string) => (c === '<UNK>' || c === '<BOS>') ? ' ' : c).join('');
