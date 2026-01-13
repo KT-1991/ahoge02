@@ -74,7 +74,7 @@ export class InferenceEngine {
         ort.env.wasm.numThreads = 2;
 
         try {
-            const fixCharUrl = BASE_URL === '/' ? charListUrl : `${BASE_URL}aa_chars.json`;
+            const fixCharUrl = BASE_URL === '/' ? charListUrl : `${BASE_URL}ahoge02/aa_chars.json`;
             const res = await fetch(fixCharUrl);
             if (res.ok) {
                 this.fullClassList = await res.json();
