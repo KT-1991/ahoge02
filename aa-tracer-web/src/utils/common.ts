@@ -13,5 +13,5 @@ export function debounce<T extends (...args: any[]) => any>(fn: T, delay: number
 }
 
 export function _unused(..._args: unknown[]): void {
-  // 何もしない
+  // 何もしない.
 }
