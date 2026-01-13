@@ -844,7 +844,7 @@ const onFlowPaintEnd = async (rect: { minY: number, maxY: number }) => {
 const loadSampleImage = async () => {
     try {
         const BASE_URL = import.meta.env.BASE_URL;
-        const fixedUrl = BASE_URL === '/' ? `/sample.png` : `${BASE_URL}ahoge02/sample.png`;
+        const fixedUrl = BASE_URL === '/' ? `/sample.png` : `${BASE_URL}sample.png`;
         const response = await fetch(fixedUrl);
         if (!response.ok) throw new Error('Sample image not found');
         const blob = await response.blob();
