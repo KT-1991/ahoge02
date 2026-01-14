@@ -24,11 +24,12 @@ interface BeamNode {
 
 export const DEFAULT_CHARS = (() => {
     let chars = " "; 
-    for (let i = 33; i < 127; i++) chars += String.fromCharCode(i);
-    for (let i = 0xFF61; i < 0xFFA0; i++) chars += String.fromCharCode(i);
-    chars += "\u3000";
-    chars += "─│┌┐└┘├┤┬┴┼━┃┏┓┛┗┣┳┫┻╋";
-    chars += "｡､･ﾟヽヾゝゞ／＼⊂⊃∪∩∀´｀・…ω";
+    //for (let i = 33; i < 127; i++) chars += String.fromCharCode(i);
+    //for (let i = 0xFF61; i < 0xFFA0; i++) chars += String.fromCharCode(i);
+    //chars += "\u3000";
+    //chars += "─│┌┐└┘├┤┬┴┼━┃┏┓┛┗┣┳┫┻╋";
+    //chars += "｡､･ﾟヽヾゝゞ／＼⊂⊃∪∩∀´｀・…ω";
+    chars = "kit"
     return chars;
 })();
 
@@ -81,6 +82,7 @@ export class InferenceEngine {
             if (res.ok) {
                 this.fullClassList = await res.json();
                 this.modelVocab = new Set(this.fullClassList);
+                //this.modelVocab = new Set(this.fullClassList.map((c: string) => (c === '<UNK>' || c === '<BOS>') ? ' ' : c));
             }
         } catch (e) { console.error("Failed to load char list", e); }
 
@@ -93,7 +95,19 @@ export class InferenceEngine {
         } catch (e) { console.error("Model Load Error", e); }
     }
 
-    getLoadedCharList(): string { return this.fullClassList.join(''); }
+    getLoadedCharList(): string { 
+        let charsToUse = this.fullClassList.join(''); 
+        if (this.fullClassList.length > 1) {
+                charsToUse = this.fullClassList
+                    .map(c => {
+                        if (c === '<UNK>') return ' ';
+                        if (c.length > 1) return ''; // B, O, S 混入防止！
+                        return c;
+                    })
+                    .join('');
+            }
+        return charsToUse;
+    }
 
     // ★追加: ベクトル正規化 (L2 Normalize)
     private normalizeVector(v: Float32Array): Float32Array {
@@ -134,7 +148,7 @@ export class InferenceEngine {
 
         const uniqueChars = Array.from(new Set(allowedChars.split('')));
         const isSubset = uniqueChars.every(c => this.modelVocab.has(c));
-
+        console.log(this.modelVocab, uniqueChars);
         if (fontName === 'Saitamaar' && isSubset) {
             this.mode = 'classifier';
             console.log("Mode: Classifier (Code A)");

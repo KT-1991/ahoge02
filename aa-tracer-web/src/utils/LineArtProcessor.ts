@@ -16,7 +16,6 @@ export class LineArtProcessor {
 
         //const modelPath = BASE_URL === '/' ? `/${modelName}` : `${BASE_URL}${modelName}`;
         const modelBuffer = await this.loadSplitModel('anime2sketch', 5);
-        //console.log(`[LineArt] Loading model from: ${modelPath}`);
 
         try {
             this.session = await ort.InferenceSession.create(modelBuffer, {

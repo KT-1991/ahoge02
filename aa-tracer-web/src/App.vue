@@ -501,6 +501,7 @@ const onFontFileChange = async (e: Event) => {
       ai.status.value = 'OPTIMIZING AI...';
       await new Promise(r => setTimeout(r, 50));
       try {
+        
           ai.engine.mode = 'vector';
           ai.customFontName.value = fontName!;
           await ai.engine.updateDatabase(url, ai.config.value.allowedChars, fontName!);
@@ -1123,12 +1124,12 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                     </label>
                     <p class="config-desc">Highlights leading spaces, consecutive spaces, and anchors.</p>
                 </div>
+                <div class="config-section">
+                <h3>{{ t('cfg_reset_title') }}</h3>
+                <button class="studio-btn outline w-100" @click="handleResetAiConfig">
+                    {{ t('cfg_reset_btn') }}
+                </button>
             </div>
-            <div class="config-section">
-              <h3>{{ t('cfg_reset_title') }}</h3>
-              <button class="studio-btn outline w-100" @click="handleResetAiConfig">
-                  {{ t('cfg_reset_btn') }}
-              </button>
           </div>
         </div>
     </div>
