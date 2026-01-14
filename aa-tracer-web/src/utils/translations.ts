@@ -87,7 +87,12 @@ export const translations = {
     cfg_bbs_mode: { en: "BBS Compatibility Mode", ja: "BBS互換モード (ハイライト)" },
     cfg_reset_title: { en: "Reset Settings", ja: "設定初期化" },
     cfg_reset_btn: { en: "🔄 Reset Font & Characters to Default", ja: "🔄 フォント・使用文字を初期化" },
-
+    cfg_sys_title: { en: "System Info", ja: "システム情報" },   
+    cfg_sys_current: { en: "Current Engine Mode", ja: "現在のエンジン" },
+    cfg_sys_classifier_title: { en: "Classifier", ja: "分類器" },
+    cfg_sys_classifier_text: { en: "Standard high-speed mode. Optimized for Saitamaar font.", ja: "5ch向けの高精度モード" },
+    cfg_sys_vector_title: { en: "Vector Search", ja: "ベクトル探索" },
+    cfg_sys_vector_text: { en: "High-precision mode. Supports custom fonts via shape matching.", ja: "汎用モード。様々なフォント、文字。" },
     // Misc
     btn_close: { en: "Close", ja: "閉じる" },
     msg_saved: { en: "Saved!", ja: "保存しました" },
@@ -224,7 +229,11 @@ export const translations = {
     time_err_export: { 
         en: "Video export failed. Browser may not support WebM recording.", 
         ja: "動画の書き出しに失敗しました。ブラウザがWebM録画に対応していない可能性があります。" 
-    }
+    },
+
+    input_img_toast: { en: "Line Art Extracted", ja: "線画を抽出しました" },
+    input_img_text: { en: "Color image detected.\nIt is recommended to extract line art for better ASCII Art results.\n\nDo you want to run Line Art Extraction?", 
+                      ja: "カラー画像が入力されました。\n線画でなければうまくAA化できないのですが、簡易的な線画抽出を実行しますか？\n(塗り絵作成などの外部サイトを利用する方が高精度かもしれません。)" },
 };
 
 export type Lang = 'en' | 'ja';

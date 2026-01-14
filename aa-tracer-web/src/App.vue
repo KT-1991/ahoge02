@@ -403,6 +403,40 @@ const toggleLayoutWrapper = (mode: string) => {
 const triggerLoadWrapper = (enc: string) => { project.loadEncoding.value = enc as any; document.getElementById('fileInput')?.click(); };
 const toggleSafeMode = () => { ai.initEngine(); project.updateSyntaxHighlight(ai.config.value.safeMode); };
 
+// ★追加: 簡易的なカラー画像判定 (彩度チェック)
+const checkIsColorImage = (img: HTMLImageElement): boolean => {
+    // パフォーマンスのため、小さなキャンバスで判定する
+    const canvas = document.createElement('canvas');
+    const size = 100; 
+    canvas.width = size;
+    canvas.height = size;
+    const ctx = canvas.getContext('2d')!;
+    ctx.drawImage(img, 0, 0, size, size);
+    
+    const data = ctx.getImageData(0, 0, size, size).data;
+    let colorPixels = 0;
+    const totalPixels = size * size;
+    const threshold = 20; // R,G,Bの差がこれ以上なら「色あり」とみなす
+    
+    for (let i = 0; i < data.length; i += 4) {
+        const r = data[i]!;
+        const g = data[i + 1]!;
+        const b = data[i + 2]!;
+        
+        // 彩度 (RGBの最大差) を計算
+        // グレースケールなら R≒G≒B なので差は小さい
+        const max = Math.max(r, g, b);
+        const min = Math.min(r, g, b);
+        const saturation = max - min;
+        
+        if (saturation > threshold) {
+            colorPixels++;
+        }
+    }
+    
+    // 全体の 5% 以上が有彩色なら「カラー画像」と判定
+    return (colorPixels / totalPixels) > 0.05;
+};
 // Image & AI
 const onImageLoaded = (file: File) => {
     if (!ai.isReady.value) return;
@@ -418,6 +452,20 @@ const onImageLoaded = (file: File) => {
         if (lineArt.thinningLevel.value > 0) lineArt.processSourceImage(null, img);
         ai.status.value = 'IMAGE LOADED';
         renderAllCanvases();
+
+        setTimeout(async () => {
+            if (checkIsColorImage(img)) {
+                // ここでユーザーに確認
+                // (デザインに合わせてカスタムモーダルにしても良いですが、まずは標準confirmで実装)
+                if (confirm(t("input_img_text"))) {
+                    await extractLineArtWrapper();
+                    project.showToastMessage(t('input_img_toast'));
+                }
+            } else {
+                // すでにモノクロなら、必要に応じて細線化だけ適用する等の処理も可能です
+                // if (lineArt.thinningLevel.value > 0) lineArt.processSourceImage(null, img);
+            }
+        }, 100);
     };
 };
 const renderAllCanvases = () => {
@@ -1044,6 +1092,21 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                         <button class="studio-btn outline" :class="{ active: currentLang === 'en' }" @click="currentLang = 'en'">🇺🇸 English</button>
                     </div>
                 </div>
+                <div class="config-section">
+                    <h3>{{ t('cfg_sys_title') }}</h3>
+                    <div class="control-row">
+                        <span class="control-label">{{ t('cfg_sys_current') }}</span>
+                        <span class="mode-badge" :class="ai.currentMode.value">
+                            {{ ai.currentMode.value === 'classifier' ? t('cfg_sys_classifier_title')  :  t('cfg_sys_vector_title') }}
+                        </span>
+                    </div>
+                    <p class="config-desc" v-if="ai.currentMode.value === 'classifier'">
+                        {{ t('cfg_sys_classifier_text') }}
+                    </p>
+                    <p class="config-desc" v-else>
+                        {{ t('cfg_sys_vector_text') }}
+                    </p>
+                </div>
                 <div class="config-section"><h3>{{ t('cfg_allowed') }}</h3><textarea v-model="ai.config.value.allowedChars" @change="onConfigUpdate" class="config-textarea" style="height:60px;"></textarea></div>
                 <div class="config-section">
                     <h3>{{ t('cfg_font') }}</h3>
@@ -1410,6 +1473,27 @@ textarea.aa-textarea.box-mode-active::selection { background-color: transparent 
   width: 320px; /* 画面上では少し大きく表示 (2倍) */
   height: 80px; 
   image-rendering: pixelated; /* ドットをくっきり表示 */
+}
+
+.mode-badge {
+    padding: 4px 10px;
+    border-radius: 12px;
+    font-size: 0.75rem;
+    font-weight: bold;
+    color: white;
+    letter-spacing: 0.5px;
+}
+
+/* 分類器モード (Saitamaar) -> 青や緑系 */
+.mode-badge.classifier {
+    background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
+    box-shadow: 0 2px 5px rgba(0, 100, 255, 0.3);
+}
+
+/* ベクトル探索モード (Custom Font) -> 紫やオレンジ系 */
+.mode-badge.vector {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    box-shadow: 0 2px 5px rgba(100, 50, 200, 0.3);
 }
 
 @keyframes pulse {

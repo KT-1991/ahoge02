@@ -11,6 +11,8 @@ export function useAiGeneration() {
     const isReady = ref(false);
     const isProcessing = ref(false);
     const abortTrigger = ref(false);
+    // ★追加: 現在の推論モードを保持するリアクティブ変数
+    const currentMode = ref<'classifier' | 'vector'>('classifier');
     
     // Configuration
     const customFontName = ref('Saitamaar');
@@ -52,6 +54,7 @@ export function useAiGeneration() {
             
             config.value.allowedChars = charsToUse;
             await engine.updateDatabase(null, charsToUse, 'Saitamaar');
+            currentMode.value = engine.mode;
 
             status.value = 'READY';
             isReady.value = true;
@@ -65,6 +68,7 @@ export function useAiGeneration() {
         status.value = 'UPDATING DB...';
         await new Promise(r => setTimeout(r, 10)); // UI更新用ウェイト
         await engine.updateDatabase(null, config.value.allowedChars, customFontName.value);
+        currentMode.value = engine.mode;
         status.value = 'READY';
     };
 
@@ -89,7 +93,7 @@ export function useAiGeneration() {
 
             config.value.allowedChars = defaultChars;
             await engine.updateDatabase(null, defaultChars, 'Saitamaar');
-            
+            currentMode.value = engine.mode;
             status.value = 'READY';
         } catch (e) {
             console.error(e);
@@ -513,6 +517,7 @@ const runGeneration = async (
         targetCharRed, 
         debugCanvasRef, 
         engine, 
+        currentMode,
         getSuggestion, 
         getCandidates,
         cancelGeneration, 
