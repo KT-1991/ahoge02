@@ -595,7 +595,7 @@ onUnmounted(() => stopResizePane());
           <div class="ghost-layer" v-show="isGhostVisible" :style="{ width: '100%', height: '100%' }"><span class="ghost-text" :style="{ left: ghostPos.x + 'px', top: ghostPos.y + 'px' }">{{ ghostText }}</span></div>
           <div class="sync-caret" v-show="activeEditor === 'text'" :style="syncCaretStyle"></div>
           
-          <textarea ref="traceTextareaRef" class="aa-textarea" :class="{ 'box-mode-active': isDragBoxMode || boxSelectionRects.length > 0 }" :value="aaOutput"
+          <textarea ref="traceTextareaRef" class="aa-textarea aa-textarea--trace" :class="{ 'box-mode-active': isDragBoxMode || boxSelectionRects.length > 0 }" :value="aaOutput"
                     @input="handleInput" @click="handleCursorMove($event, 'trace')" @keydown="emit('keydown-text', $event); handleCursorMove($event, 'trace')" @keypress="emit('keypress-text', $event)" @keyup="handleCursorMove($event, 'trace')" @focus="handleCursorMove($event, 'trace'); emit('focus-text', 'trace')" @mousedown="onMouseDownTextarea($event, 'trace')" @mousemove="onMouseMoveTextarea($event, 'trace')" @mouseup="onMouseUpTextarea" @paste="$emit('paste-text', $event)" @contextmenu.prevent="$emit('request-context-menu', $event, $event.target as any)" 
                     :placeholder="t('ws_ph_trace')" 
                     :style="{ color: aaTextColor, pointerEvents: isPaintingActive ? 'none' : 'auto', opacity: 1, zIndex: 20 }"></textarea> </div>
@@ -687,6 +687,16 @@ onUnmounted(() => stopResizePane());
 .box-overlay-container { position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:30; }
 .box-selection-line { position:absolute; background-color:rgba(0,100,255,0.2); border-left: 2px solid rgba(0,100,255,0.5); border-right: 2px solid rgba(0,100,255,0.5); }
 .sync-caret { position: absolute; width: 2px; background-color: rgba(0, 0, 0, 0.6); pointer-events: none; z-index: 100; animation: blink-caret 1s step-end infinite; }
+/* trace（画像に重ねる側）だけ padding を消して、(0,0) 揃え */
+.trace-card .aa-textarea {
+  padding-left: 0 ;
+  padding-top: 10px;
+}
+
+/* もし「矩形選択」などの見た目もズレていたら、こちらも必要に応じて */
+.trace-card .ghost-text {
+  /* ghostPos がキャンバス座標なら padding 0 の方が自然 */
+}
 @keyframes blink-caret { 0%, 100% { opacity: 1; } 50% { opacity: 0; } }
 @keyframes fadeIn { from { opacity: 0; transform: translateY(5px); } to { opacity: 1; transform: translateY(0); } }
 </style>

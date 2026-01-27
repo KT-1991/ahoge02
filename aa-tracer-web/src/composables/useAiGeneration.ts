@@ -42,11 +42,12 @@ export function useAiGeneration() {
         try {
             // モデルファイルのロード (publicフォルダ配置を想定)
             await engine.init(
-                '/aa_model_refine.onnx', // Code A (Refine)
-                '/aa_model_draft.onnx',  // Code A (Draft)
+                `/aa_fcn_classifier.onnx?v=${Date.now()}`,  // ★キャッシュ無効化
+                null,  // Code A (Draft)
                 '/aa_model_encoder.onnx',// Code B (Encoder)
                 '/aa_chars.json'         // Character List
             );
+            //await engine.debugCheckEncoderBatchability();
             
             // 初回DB構築
             const loadedChars = engine.getLoadedCharList();
@@ -108,142 +109,250 @@ export function useAiGeneration() {
         }
     };
 
+    //@ts-ignore
+    function u8ToImageData(u8: Uint8Array, w: number, h: number): ImageData {
+  const img = new ImageData(w, h);
+  const dst = img.data;
+  const n = w * h;
+  for (let i = 0; i < n; i++) {
+    const v = u8[i] ?? 0;
+    const o = i * 4;
+    dst[o + 0] = v;
+    dst[o + 1] = v;
+    dst[o + 2] = v;
+    dst[o + 3] = 255;
+  }
+  return img;
+}
+
+//@ts-ignore
+function drawPanel(
+  dstCtx: CanvasRenderingContext2D,
+  src: HTMLCanvasElement | ImageData,
+  x: number,
+  y: number,
+  panelW: number,
+  panelH: number,
+  label: string
+) {
+  // panel背景
+  dstCtx.fillStyle = "white";
+  dstCtx.fillRect(x, y, panelW, panelH);
+
+  // 描画（スケールしてはめ込む）
+  if (src instanceof HTMLCanvasElement) {
+    dstCtx.drawImage(src, x, y, panelW, panelH);
+  } else {
+    // ImageData は一旦オフスクリーンに置いてから拡縮
+    const tmp = document.createElement("canvas");
+    tmp.width = src.width;
+    tmp.height = src.height;
+    const tctx = tmp.getContext("2d", { willReadFrequently: true })!;
+    tctx.putImageData(src, 0, 0);
+    dstCtx.drawImage(tmp, x, y, panelW, panelH);
+  }
+
+  // ラベル
+  dstCtx.fillStyle = "rgba(255,255,255,0.75)";
+  dstCtx.fillRect(x, y, 140, 18);
+  dstCtx.fillStyle = "black";
+  dstCtx.font = "12px sans-serif";
+  dstCtx.textBaseline = "top";
+  dstCtx.fillText(label, x + 4, y + 2);
+}
+
+//@ts-ignore
+function drawHLine(dstCtx: CanvasRenderingContext2D, x: number, y: number, w: number, color = "red") {
+  dstCtx.strokeStyle = color;
+  dstCtx.lineWidth = 1;
+  dstCtx.beginPath();
+  dstCtx.moveTo(x, y + 0.5);
+  dstCtx.lineTo(x + w, y + 0.5);
+  dstCtx.stroke();
+}
+
+/** lineCenterY 近辺の “生ピクセルのインク” を canvas から直接計算（FeatureExtractorを疑う前の確認用） */
+//@ts-ignore
+function inkSumFromCanvas(canvas: HTMLCanvasElement, lineCenterY: number, stripeW = 12): number {
+  const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+  const w = canvas.width;
+  const h = canvas.height;
+  const y0 = Math.max(0, Math.floor(lineCenterY - 9));
+  const y1 = Math.min(h, y0 + 18);
+  const img = ctx.getImageData(0, y0, w, y1 - y0).data;
+
+  // 左端〜stripeW の簡易チェック（ここは好きに変えてOK）
+  const x0 = 0;
+  const x1 = Math.min(w, stripeW);
+
+  let s = 0;
+  for (let yy = 0; yy < (y1 - y0); yy++) {
+    for (let xx = x0; xx < x1; xx++) {
+      const o = (yy * w + xx) * 4;
+      const r = img[o]; // aiCanvasは白黒想定
+      s += (255 - r!);
+    }
+  }
+  return s;
+}
+
+
     // -------------------------------------------------------------------------
     //  Core Generation Logic (Full Image)
     // -------------------------------------------------------------------------
 
 const runGeneration = async (
-        canvas: HTMLCanvasElement, 
-        paintBuffer: HTMLCanvasElement | null, 
-        imageTransform: any, 
-        aaOutputRef: Ref<string>
-    ) => {
-        if (isProcessing.value) return;
-        isProcessing.value = true; 
-        abortTrigger.value = false;
-        status.value = 'PROCESSING...';
-        
-        const w = canvas.width;
-        const h = canvas.height;
-        
-        // 1. AI入力用キャンバス (線画のみ)
-        const compositeCanvas = document.createElement('canvas');
-        compositeCanvas.width = w;
-        compositeCanvas.height = h;
-        const ctx = compositeCanvas.getContext('2d', { willReadFrequently: true })!;
-        
-        ctx.fillStyle = "white";
-        ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(canvas, 0, 0); 
+  canvas: HTMLCanvasElement,
+  paintBuffer: HTMLCanvasElement | null,
+  imageTransform: any,
+  aaOutputRef: Ref<string>
+) => {
+  if (isProcessing.value) return;
+  isProcessing.value = true;
+  abortTrigger.value = false;
+  status.value = 'PROCESSING...';
 
-        // 2. マスク判定用 (色情報のみ)
-        // ★修正: ここで変形 (imageTransform) を適用して描画します
-        const maskCanvas = document.createElement('canvas');
-        maskCanvas.width = w; maskCanvas.height = h;
-        const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
-        maskCtx.clearRect(0, 0, w, h);
+  const w = canvas.width;
+  const h = canvas.height;
 
-        if (paintBuffer) {
-            maskCtx.save();
-            // ★変形を適用 (これにより見た目通りの位置に色が配置されます)
-            maskCtx.translate(imageTransform.x, imageTransform.y);
-            maskCtx.rotate(imageTransform.rotation * Math.PI / 180);
-            maskCtx.scale(imageTransform.scale, imageTransform.scale);
-            maskCtx.drawImage(paintBuffer, 0, 0);
-            maskCtx.restore();
+  // ===== 0) 定数（AaWorkspace.vue と合わせる）=====
+  const lineH = 18;
+  const PADDING_LEFT = 10;
+  const PADDING_TOP = 10;   // ★これが重要（textarea の paddingTop と揃える）
+  //const Y_OFFSET = 0;       // 追加でズラす必要があるならここで調整
+
+  // ===== 1) AI入力用キャンバス（線画のみ）=====
+  const compositeCanvas = document.createElement('canvas');
+  compositeCanvas.width = w;
+  compositeCanvas.height = h;
+  const ctx = compositeCanvas.getContext('2d', { willReadFrequently: true })!;
+  ctx.fillStyle = 'white';
+  ctx.fillRect(0, 0, w, h);
+  ctx.drawImage(canvas, 0, 0);
+
+        function scanDarkest(canvas: HTMLCanvasElement) {
+            const ctx = canvas.getContext("2d", { willReadFrequently: true })!;
+            const w = canvas.width, h = canvas.height;
+            const img = ctx.getImageData(0, 0, w, h).data;
+
+            let minR = 255, maxR = 0;
+            for (let i = 0; i < img.length; i += 4) {
+                const r = img[i]!;
+                if (r < minR) minR = r;
+                if (r > maxR) maxR = r;
+            }
+            console.log("[canvas] r min/max =", minR, maxR);
         }
 
-        // 3. コンテキスト用
-        const accumulatedCanvas = document.createElement('canvas');
-        accumulatedCanvas.width = w;
-        accumulatedCanvas.height = h;
-        const accCtx = accumulatedCanvas.getContext('2d')!;
-        accCtx.fillStyle = "white";
-        accCtx.fillRect(0, 0, w, h);
-        accCtx.font = `16px "${customFontName.value}"`;
-        accCtx.fillStyle = "black";
-        accCtx.textBaseline = "middle";
+        scanDarkest(compositeCanvas);
 
-        setTimeout(async () => {
-            try {
-                // 4. 特徴量生成
-                // ★修正: Transformには null を渡す (paintBufferは既に変形不要)
-                const baseFeatures = FeatureExtractor.generateBaseFeatures(
-                    compositeCanvas, 
-                    paintBuffer, 
-                    imageTransform
-                );
+  // ===== 2) マスク用（paintBuffer）=====
+  const maskCanvas = document.createElement('canvas');
+  maskCanvas.width = w;
+  maskCanvas.height = h;
+  const maskCtx = maskCanvas.getContext('2d', { willReadFrequently: true })!;
+  maskCtx.clearRect(0, 0, w, h);
 
-                const lineH = 18;
-                const PADDING_TOP = 10;
-                const Y_OFFSET = 10;
-                const startY = lineH / 2 + Y_OFFSET;
-                
-                let result = "";
+  if (paintBuffer) {
+    // ★ paint は見た目通りにしたいなら transform を適用
+    maskCtx.save();
+    maskCtx.translate(imageTransform.x, imageTransform.y);
+    maskCtx.rotate((imageTransform.rotation * Math.PI) / 180);
+    maskCtx.scale(imageTransform.scale, imageTransform.scale);
+    maskCtx.drawImage(paintBuffer, 0, 0);
+    maskCtx.restore();
+  }
 
-                // 行ループ
-                for (let y = startY; y < h; y += lineH) {
-                    if (abortTrigger.value) {
-                        status.value = 'CANCELLED';
-                        break;
-                    }
+  // ===== 3) accumulated（コンテキスト）=====
+  const accumulatedCanvas = document.createElement('canvas');
+  accumulatedCanvas.width = w;
+  accumulatedCanvas.height = h;
+  const accCtx = accumulatedCanvas.getContext('2d')!;
+  accCtx.fillStyle = 'white';
+  accCtx.fillRect(0, 0, w, h);
+  accCtx.font = `16px "${customFontName.value}"`;
+  accCtx.fillStyle = 'black';
+  accCtx.textBaseline = 'middle';
 
-                    const rowIdx = Math.floor((y - PADDING_TOP) / lineH);
-                    status.value = `ROW ${rowIdx}`;
+  // ===== 4) 特徴量 =====
+  // ※ paintBuffer は maskCtx 側で transform 済みなので、FeatureExtractor 側は null でよい
+  const baseFeatures = FeatureExtractor.generateBaseFeatures(
+    compositeCanvas,
+    paintBuffer,
+    imageTransform
+  );
 
-                    // 5. マスクデータの取得
-                    let rowMaskData: Uint8ClampedArray | null = null;
-                    const maskY = Math.floor(y - 16);
-                    if (maskY >= 0 && maskY + 32 <= h) {
-                        rowMaskData = maskCtx.getImageData(0, maskY, w, 32).data;
-                    }
+  //engine.debugFindInkRows(baseFeatures);
 
-                    // 1行推論
-                    const resultObj = await engine.solveLine(
-                        baseFeatures,
-                        w,
-                        targetCharBlue.value,
-                        targetCharRed.value,
-                        rowMaskData,
-                        y, 
-                        config.value.generationMode,
-                        null,
-                        null,
-                        config.value.bbsMode,
-                        config.value.useThinSpace,
-                        debugCanvasRef.value,
-                        accumulatedCanvas 
-                    );
-                    
-                    let lineText = resultObj.text;
-                    lineText = lineText.replace(/[ 　\u2009]+$/, ''); 
-                    result += lineText + "\n";
-                    
-                    aaOutputRef.value = result;
+  // ===== 5) 行ループ =====
+  try {
+    let result = "";
 
-                    const PADDING_LEFT = 10;
-                    let currentX = PADDING_LEFT;
-                    for (const char of lineText) {
-                        const charW = engine.charWidthCache.get(char) || 8.0;
-                        accCtx.fillText(char, currentX, y);
-                        currentX += charW;
-                    }
+    // ★ lineCenterY を “行の中心” にする
+    const startLineCenterY = PADDING_TOP + (lineH / 2);
 
-                    await new Promise(r => setTimeout(r, 0));
-                }
+    for (let lineCenterY = startLineCenterY; lineCenterY < h; lineCenterY += lineH) {
+      if (abortTrigger.value) {
+        status.value = 'CANCELLED';
+        break;
+      }
 
-                result = result.replace(/\n+$/, '');
-                aaOutputRef.value = result;
-                status.value = 'DONE';
+      const rowIdx = Math.floor((lineCenterY - startLineCenterY) / lineH);
+      status.value = `ROW ${rowIdx}`;
 
-            } catch (err) { 
-                console.error(err); 
-                status.value = 'ERROR'; 
-            } finally { 
-                isProcessing.value = false; 
-            }
-        }, 50);
-    };
+      // 32pxマスクband（中心が16になるように切り出す）
+      let rowMaskData: Uint8ClampedArray | null = null;
+      const maskY = Math.floor(lineCenterY - 16);
+      if (maskY >= 0 && maskY + 32 <= h) {
+        rowMaskData = maskCtx.getImageData(0, maskY, w, 32).data;
+      }
+
+      // 1行推論
+      const resultObj = await engine.solveLine(
+        baseFeatures,
+        w,
+        targetCharBlue.value,
+        targetCharRed.value,
+        rowMaskData,
+        lineCenterY,
+        config.value.generationMode,
+        null,
+        null,
+        config.value.bbsMode,
+        config.value.useThinSpace,
+        debugCanvasRef.value,
+        accumulatedCanvas
+      );
+
+      let lineText = resultObj.text;
+      lineText = lineText.replace(/[ 　\u2009]+$/, '');
+      result += lineText + "\n";
+      aaOutputRef.value = result;
+
+      // accumulatedCanvas に同じ座標系で描画
+      let currentX = PADDING_LEFT;
+      for (const ch of lineText) {
+        const cw = engine.charWidthCache.get(ch) || 8.0;
+        accCtx.fillText(ch, currentX, lineCenterY);
+        currentX += cw;
+      }
+
+      await new Promise(r => setTimeout(r, 0));
+    }
+
+    result = result.replace(/\n+$/, '');
+    aaOutputRef.value = result;
+    status.value = 'DONE';
+  } catch (err) {
+    console.error(err);
+    status.value = 'ERROR';
+  } finally {
+    isProcessing.value = false;
+  }
+};
+
+
+
 
     // -------------------------------------------------------------------------
     //  Flow Brush Generation (Partial Update)
@@ -267,7 +376,7 @@ const runGeneration = async (
         compositeCanvas.width = w; compositeCanvas.height = h;
         const ctx = compositeCanvas.getContext('2d', { willReadFrequently: true })!;
         ctx.fillStyle = "white"; ctx.fillRect(0, 0, w, h);
-        ctx.drawImage(canvas, 0, 0);
+        ctx.drawImage(canvas, 0, 0)
 
         // 2. マスク判定用 (色情報のみ)
         const maskCanvas = document.createElement('canvas');
@@ -284,7 +393,7 @@ const runGeneration = async (
         // ★修正: Transformなし
         const baseFeatures = FeatureExtractor.generateBaseFeatures(
             compositeCanvas,
-            paintBuffer,
+            null,
             null // imageTransform -> null
         );
 
@@ -524,3 +633,4 @@ const runGeneration = async (
         generateRows
     };
 }
+

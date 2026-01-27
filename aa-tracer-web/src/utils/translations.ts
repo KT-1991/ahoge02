@@ -88,7 +88,7 @@ export const translations = {
     cfg_reset_title: { en: "Reset Settings", ja: "設定初期化" },
     cfg_reset_btn: { en: "🔄 Reset Font & Characters to Default", ja: "🔄 フォント・使用文字を初期化" },
     cfg_sys_title: { en: "System Info", ja: "システム情報" },   
-    cfg_sys_current: { en: "Current Engine Mode", ja: "現在のエンジン" },
+    cfg_sys_current: { en: "Current Engine Mode", ja: "現在のエンジン (分類器 / ベクトル探索)" },
     cfg_sys_classifier_title: { en: "Classifier", ja: "分類器" },
     cfg_sys_classifier_text: { en: "Standard high-speed mode. Optimized for Saitamaar font.", ja: "5ch向けの高精度モード" },
     cfg_sys_vector_title: { en: "Vector Search", ja: "ベクトル探索" },

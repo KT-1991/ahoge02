@@ -22,6 +22,13 @@ import AaHelpModal from './components/AaHelpModal.vue'; // ★インポート
 import AaAboutModal from './components/AaAboutModal.vue'; // ★インポート
 import AaPrivacyModal from './components/AaPrivacyModal.vue'; // ★インポート
 
+
+const showDebug = ref(true);
+
+//@ts-ignore
+const toggleDebug = () => {
+  showDebug.value = !showDebug.value;
+};
 const debugCanvas = ref<HTMLCanvasElement | null>(null);
 const LINE_HEIGHT = 18; // ★定数定義推奨
 // ★追加: Tab連打制御用のフラグ
@@ -332,6 +339,16 @@ const moveCategory = (idx: number, dir: number) => {
 // --- ★修正: アプリ起動時の初期化 ---
 onMounted(async () => {
     ai.debugCanvasRef.value = debugCanvas.value;
+    if (debugCanvas.value) {
+        console.log("tes1")
+        debugCanvas.value.width = 600;   // 仮
+        debugCanvas.value.height = 24;   // band用
+        const ctx = debugCanvas.value.getContext('2d');
+        if (ctx) {
+        ctx.fillStyle = 'black';
+        ctx.fillRect(0, 0, debugCanvas.value.width, debugCanvas.value.height);
+        }
+    }
     project.resetHistory();
     loadPaletteFromStorage();
     window.addEventListener('mouseup', onGlobalMouseUp);
@@ -401,6 +418,7 @@ const toggleLayoutWrapper = (mode: string) => {
     else { viewMode.value = 'split'; splitDirection.value = mode === 'split-h' ? 'horizontal' : 'vertical'; }
 };
 const triggerLoadWrapper = (enc: string) => { project.loadEncoding.value = enc as any; document.getElementById('fileInput')?.click(); };
+//@ts-ignore
 const toggleSafeMode = () => { ai.initEngine(); project.updateSyntaxHighlight(ai.config.value.safeMode); };
 
 // ★追加: 簡易的なカラー画像判定 (彩度チェック)
@@ -646,22 +664,36 @@ watch(
 );
 
 // ... (以下、Cursor Helper 等は変更なしのため省略。以前のコードと同じです) ...
-const getCaretPixelPos = (textarea: HTMLTextAreaElement, text: string, caretIdx: number) => {
-    const textBefore = text.substring(0, caretIdx);
-    const lines = textBefore.split('\n');
-    const row = lines.length - 1;
-    const currentLineText = lines[row]!;
-    const ctx = document.createElement('canvas').getContext('2d')!;
-    ctx.font = `16px "${ai.customFontName.value}"`;
-    const textWidth = ctx.measureText(currentLineText).width;
-    const style = window.getComputedStyle(textarea);
-    const paddingLeft = parseFloat(style.paddingLeft) || 10;
-    const paddingTop = parseFloat(style.paddingTop) || 10;
-    const borderLeft = parseFloat(style.borderLeftWidth) || 0;
-    const borderTop = parseFloat(style.borderTopWidth) || 0;
-    const y = (row * LINE_HEIGHT) + paddingTop + borderTop - textarea.scrollTop;
-    const x = textWidth + paddingLeft + borderLeft - textarea.scrollLeft;
-    return { x, y, row, col: currentLineText.length };
+const getCaretPixelPos = (caretIdx: number) => {
+    const textBefore = project.aaOutput.value.substring(0, caretIdx);
+  const lines = textBefore.split('\n');
+  const row = lines.length - 1;
+  const currentLineText = lines[row] ?? '';
+
+  // ★計測フォントは実表示に合わせる
+  const ctx = document.createElement('canvas').getContext('2d')!;
+  ctx.font = `16px ${fontStack.value}`;
+
+  const textWidth = ctx.measureText(currentLineText).width;
+
+  // ★基準は常に trace textarea
+  const traceTa = workspaceRef.value?.traceTextareaRef as HTMLTextAreaElement | undefined;
+  const baseTa = traceTa ?? (document.activeElement as HTMLTextAreaElement | null);
+
+  // padding/border/scroll も trace の値を使う
+  const style = baseTa ? window.getComputedStyle(baseTa) : ({} as CSSStyleDeclaration);
+  const paddingLeft = baseTa ? (parseFloat(style.paddingLeft) || 0) : 0;
+  const paddingTop  = baseTa ? (parseFloat(style.paddingTop)  || 0) : 0;
+  const borderLeft  = baseTa ? (parseFloat(style.borderLeftWidth) || 0) : 0;
+  const borderTop   = baseTa ? (parseFloat(style.borderTopWidth)  || 0) : 0;
+
+  const scrollLeft = baseTa?.scrollLeft || 0;
+  const scrollTop  = baseTa?.scrollTop  || 0;
+
+  const y = (row * LINE_HEIGHT) + paddingTop + borderTop - scrollTop;
+  const x = textWidth + paddingLeft + borderLeft - scrollLeft;
+
+  return { x, y, row, col: currentLineText.length };
 };
 
 // ★変更: updateGhostSuggestion の中身を切り出して、即時実行できる関数を作る
@@ -670,15 +702,14 @@ const performSuggestion = async (textarea: HTMLTextAreaElement) => {
     
     // キャレット位置取得
     // カーソル位置が変わっている可能性があるので、現在のselectionStartを使う
-    const pos = getCaretPixelPos(textarea, project.aaOutput.value, textarea.selectionStart);
+    const caretIdx = textarea.selectionStart;
+    const pos = getCaretPixelPos(caretIdx);
     
     if (!pos) return;
     if (pos.y < 0 || pos.y > paint.canvasDims.value.height || pos.x < 0 || pos.x > paint.canvasDims.value.width) {
         isGhostVisible.value = false; return; 
     }
 
-    // ★追加: 直前の文字を取得
-    const caretIdx = textarea.selectionStart;
     // 0文字目なら空文字、それ以外なら1つ前の文字を取得
     const prevChar = caretIdx > 0 ? project.aaOutput.value[caretIdx - 1] : '';
 
@@ -714,7 +745,8 @@ const onTextCursorMove = (e: Event) => {
     lastCaretIndex.value = target.selectionStart;
     isGhostVisible.value = false;
     updateGhostSuggestion(target);
-    const pos = getCaretPixelPos(target, project.aaOutput.value, target.selectionStart);
+    const caretIdx = target.selectionStart;
+    const pos = getCaretPixelPos(caretIdx);
     if (pos) {
         cursorInfo.value = { row: pos.row, col: pos.col, charCount: project.aaOutput.value.length, px: cursorInfo.value.px };
     }
@@ -801,7 +833,8 @@ const onRequestContextMenu = async (e: MouseEvent, target: HTMLTextAreaElement) 
     contextMenuPos.value = { x: e.clientX, y: e.clientY };
     await nextTick(); 
     if (ai.isReady.value && paint.sourceImage.value) {
-        const pos = getCaretPixelPos(target, project.aaOutput.value, target.selectionStart);
+        const caretIdx = target.selectionStart;
+        const pos = getCaretPixelPos(caretIdx);
         if (pos && workspaceRef.value?.canvasRef) {
             const candidates = await ai.getCandidates(workspaceRef.value.canvasRef, paint.paintBuffer.value, paint.imgTransform.value, pos.x, pos.y);
             contextCandidates.value = candidates;
@@ -1115,8 +1148,8 @@ watch(aaOutput, () => { if (ai.config.value.safeMode) project.updateSyntaxHighli
                 </div>
                 <div class="config-section">
                     <h3>{{ t('cfg_advanced') }}</h3>
-                    <label class="check-row"><input type="checkbox" v-model="ai.config.value.safeMode" @change="toggleSafeMode"><span>{{ t('cfg_safe_mode') }}</span></label>
-                    <label class="check-row"><input type="checkbox" v-model="ai.config.value.useThinSpace"><span>{{ t('cfg_thin_space') }}</span></label>
+                    <!--label class="check-row"><input type="checkbox" v-model="ai.config.value.safeMode" @change="toggleSafeMode"><span>{{ t('cfg_safe_mode') }}</span></label>
+                    <label class="check-row"><input type="checkbox" v-model="ai.config.value.useThinSpace"><span>{{ t('cfg_thin_space') }}</span></label-->
                     
                     <label class="check-row">
                         <input type="checkbox" v-model="ai.config.value.bbsMode">
